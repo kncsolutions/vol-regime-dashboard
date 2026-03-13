@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+    <script src="https://cdn.jsdelivr.net/npm/echarts/dist/echarts.min.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/echarts-gl/dist/echarts-gl.min.js"></script>
+
+    <link rel="stylesheet" href="style.css">
+
+</head>
+
+<body>
+
+<h2>Volatility Regime Monitoring Dashboard</h2>
+<div id="marketBanner" class="market-banner"></div>
+
+<div class="stock-selector">
+
+    <label>Select Stock:</label>
+
+    <input list="stockList" id="stockSelect" placeholder="Type or select stock..."/>
+
+    <datalist id="stockList"></datalist>
+
+</div>
+
+<div class="grid">
+
+    <div id="spotChart" class="chart"></div>
+    <div id="ivChart" class="chart"></div>
+    <div id="hvChart" class="chart"></div>
+
+    <div id="flipChart" class="chart"></div>
+    <div id="kChart" class="chart"></div>
+    <div id="bprChart" class="chart"></div>
+
+    <div id="i1Chart" class="chart"></div>
+    <div id="i2Chart" class="chart"></div>
+    <div id="ampChart" class="chart"></div>
+
+    <div id="fragilityChart" class="chart"></div>
+
+</div>
+
+<h3>Option Structure</h3>
+
+<div id="gammaLadder" style="height:400px"></div>
+<div id="gammaExposure" style="height:400px"></div>
+<div id="oiDist" style="height:400px"></div>
+<div id="oiChange" style="height:400px"></div>
+<div id="dealerHeatmap" style="height:400px"></div>
+<div id="gammaWallMap" style="height:400px"></div>
+<div id="hedgingPressure" style="height:400px"></div>
+
+<h3>Option Structure Timeline</h3>
+
+<input
+    type="range"
+    id="chainSlider"
+    min="0"
+    max="0"
+    step="1"
+    value="0"
+    style="width:100%;margin-top:10px"
+>
+
+<div id="chainTimeLabel" style="color:white;margin-top:6px"></div>
+
+
+
+<h3>Systemic Risk Analysis</h3>
+
+<div id="instabilitySurface" style="height:600px"></div>
+
+<h3>IV Skew Evolution</h3>
+
+<div id="ivSkewChart" style="height:420px"></div>
+
+<input
+        type="range"
+        id="ivSlider"
+        min="0"
+        max="0"
+        step="1"
+        value="0"
+        style="width:100%;margin-top:10px"
+>
+
+<div id="ivTimeLabel" style="color:white;margin-top:6px"></div>
+
+<h3>Market Instability Map</h3>
+
+<div id="instabilityMap" style="height:600px"></div>
+
+<h3>Stocks Near Gamma Flip (±2%)</h3>
+
+<div id="flipZoneChart" style="height:400px"></div>
+
+
+<script src="dashboard.js"></script>
+
+<footer class="dashboard-footer">
+
+    <hr>
+
+    <div class="footer-title">
+        Volatility Regime Monitoring System
+    </div>
+
+    <div class="footer-metrics">
+        Metrics: k (Impact) • I1 (Linear Instability) • I2 (Convexity Instability) • Amplification • BPR
+    </div>
+
+    <div class="footer-source">
+        Data Source: proprietary
+    </div>
+
+    <div class="footer-author">
+        Developed by Pallav Nandi Chaudhuri
+    </div>
+
+</footer>
+
+</body>
+
+</html>
