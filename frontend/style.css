@@ -13,11 +13,13 @@ body {
 }
 
 .chart {
-    height: 320px;
+    height: 400px;
+    width: 100%;
 }
-.chart-wide{
-    width:100%;
-    height:420px;
+
+.chart-wide {
+    width: 100%;
+    height: 420px;
 }
 
 .market-banner {
@@ -56,53 +58,112 @@ body {
 
 }
 
-.dashboard-footer{
+.dashboard-footer {
 
-    padding:25px;
-    margin-top:50px;
+    padding: 25px;
+    margin-top: 50px;
 
-    text-align:center;
-
-}
-
-.dashboard-footer hr{
-
-    border:0;
-    border-top:1px solid #333;
-    margin-bottom:15px;
+    text-align: center;
 
 }
 
-.footer-title{
+.dashboard-footer hr {
 
-    font-size:16px;
-    color:#cccccc;
+    border: 0;
+    border-top: 1px solid #333;
+    margin-bottom: 15px;
+
+}
+
+.footer-title {
+
+    font-size: 16px;
+    color: #cccccc;
+    font-weight: bold;
+
+}
+
+.footer-metrics {
+
+    font-size: 12px;
+    color: #888888;
+    margin-top: 6px;
+
+}
+
+.footer-source {
+
+    font-size: 11px;
+    color: #777777;
+    margin-top: 4px;
+
+}
+
+.footer-author {
+
+    font-size: 12px;
+    color: #aaaaaa;
+    margin-top: 10px;
+    font-style: italic;
+
+}
+
+#topBar{
+
+    display:flex;
+
+    align-items:center;
+
+    justify-content:space-between;
+
+    padding:12px 20px;
+
+    background:#111;
+
+    color:white;
+
+    width:100%;
+
+    box-sizing:border-box;
+
+}
+
+#title{
+
+    font-size:24px;
+
+    font-weight:bold;
+
+    white-space:nowrap;
+
+}
+
+#logoutBtn{
+
+    background:#ff4d4d;
+
+    border:none;
+
+    padding:8px 16px;
+
+    color:white;
+
+    cursor:pointer;
+
+    border-radius:4px;
+
+}
+#title{
+
+    font-size:40px;
+
     font-weight:bold;
 
 }
-
-.footer-metrics{
-
-    font-size:12px;
-    color:#888888;
-    margin-top:6px;
-
+#dashboard{
+    width:100%;
 }
-
-.footer-source{
-
-    font-size:11px;
-    color:#777777;
-    margin-top:4px;
-
+body{
+    margin:0;
+    background:#111;
 }
-
-.footer-author{
-
-    font-size:12px;
-    color:#aaaaaa;
-    margin-top:10px;
-    font-style:italic;
-
-}
-

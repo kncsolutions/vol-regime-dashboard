@@ -1,10 +1,16 @@
 from flask import Flask, jsonify
+from flask import request, abort
 import firebase_admin
-from firebase_admin import credentials, db
+from firebase_admin import credentials, db, auth
 import pandas as pd
 from flask_cors import CORS
 import numpy as np
 import os
+
+ALLOWED_USERS = [
+    "pallavagt@gmail.com",
+    "kncsolns@gmail.com"
+]
 
 cred = credentials.Certificate("breeze-credentials-firebase-adminsdk-u0aro-a51f03c53f.json")
 
@@ -13,11 +19,43 @@ firebase_admin.initialize_app(
     {"databaseURL": 'https://breeze-credentials-default-rtdb.firebaseio.com/'}
 )
 
-root_ref = db.reference("vol-regime-metrics-cleaned")
+auth_app = firebase_admin.initialize_app(
+    credentials.Certificate("dhelm-vol-regime-dashboard-firebase-adminsdk-fbsvc-0ed653c644.json"),
+    name="authApp"
+)
+
+def verify_token():
+
+    header = request.headers.get("Authorization")
+
+    if not header:
+        abort(401)
+
+    token = header.split(" ")[1]
+
+    decoded = auth.verify_id_token(token, app=auth_app)
+    print("Authenticated user:", decoded["email"])
+
+    if decoded["email"] not in ALLOWED_USERS:
+        abort(403)
+
+    return decoded
+
+
+
+# root_ref = db.reference("vol-regime-metrics-cleaned")
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, supports_credentials=True)
 
+def get_root():
+
+    dbname = request.args.get("db", "cleaned")
+
+    if dbname == "raw":
+        return db.reference("vol-regime-metrics")
+
+    return db.reference("vol-regime-metrics-cleaned")
 
 @app.route("/")
 def home():
@@ -26,6 +64,8 @@ def home():
 
 @app.route("/api/stocks")
 def stocks():
+    user = verify_token()
+    root_ref = get_root()
     data = root_ref.get()
 
     if not data:
@@ -36,6 +76,8 @@ def stocks():
 
 @app.route("/api/instability-map")
 def instability_map():
+    user = verify_token()
+    root_ref = get_root()
     data = root_ref.get()
 
     results = []
@@ -77,6 +119,8 @@ def instability_map():
 
 @app.route("/api/flipzone")
 def flipzone():
+    user = verify_token()
+    root_ref = get_root()
     data = root_ref.get()
 
     results = []
@@ -112,6 +156,8 @@ def flipzone():
 
 @app.route("/api/gamma-explosion")
 def gamma_explosion():
+    user = verify_token()
+    root_ref = get_root()
     data = root_ref.get()
 
     results = []
@@ -180,7 +226,8 @@ def gamma_explosion():
 
 @app.route("/api/convexity-radar")
 def convexity_radar():
-
+    user = verify_token()
+    root_ref = get_root()
     data = root_ref.get()
 
     results = []
@@ -314,6 +361,8 @@ def clean_option_chain(chain):
 
 @app.route("/api/dashboard/<symbol>")
 def dashboard(symbol):
+    user = verify_token()
+    root_ref = get_root()
     ref = root_ref.child(symbol).child("metrics")
 
     data = ref.get()
@@ -388,6 +437,7 @@ def dashboard(symbol):
 
 @app.route("/api/test")
 def test():
+    user = verify_token()
     return jsonify({"status": "ok"})
 
 

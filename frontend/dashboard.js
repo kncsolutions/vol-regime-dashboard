@@ -1,5 +1,6 @@
 const API = "/api"
 // const API = "http://127.0.0.1:5000/api"
+let database = "cleaned"
 let charts = {}
 let ivHistory = []
 let ivTimes = []
@@ -95,7 +96,7 @@ function initCharts() {
 
 async function loadStocks() {
 
-    let res = await fetch(API + "/stocks")
+    let res = await authFetch(`${API}/stocks?db=${database}`)
 
     let stocks = await res.json()
 
@@ -149,7 +150,7 @@ async function loadStock(symbol) {
 
     try {
 
-        let res = await fetch(API + "/dashboard/" + symbol)
+        let res = await authFetch(`${API}/dashboard/${symbol}?db=${database}`)
         let data = await res.json()
 
         if (!data || !data.time) {
@@ -315,7 +316,7 @@ function computeVannaExposure(chain, spot, lotSize = 1) {
 
 async function loadGammaExplosionRanking() {
 
-    let res = await fetch(API + "/gamma-explosion")
+    let res = await authFetch(`${API}/gamma-explosion?db=${database}`)
     let data = await res.json()
 
     renderGammaExplosionRanking(data)
@@ -324,7 +325,7 @@ async function loadGammaExplosionRanking() {
 
 async function loadConvexityRadar() {
 
-    let res = await fetch(API + "/convexity-radar")
+    let res = await authFetch(`${API}/convexity-radar?db=${database}`)
 
     let data = await res.json()
 
@@ -978,7 +979,6 @@ function renderLine(chart, x, y, title) {
 
 function renderGamma(chain) {
 
-
     charts.gamma.clear()
 
     if (!chain || chain.length === 0) {
@@ -1002,11 +1002,27 @@ function renderGamma(chain) {
         backgroundColor: "#111",
 
         title: {
-            text: "Gamma Ladder", textStyle: {color: "#fff"}
+            text: "Gamma Ladder",
+            textStyle: {color: "#fff"}
+        },
+
+        tooltip: {
+            trigger: "axis",
+            axisPointer: {
+                type: "cross"
+            },
+            formatter: function (params) {
+                let p = params[0]
+                return `
+                Strike: <b>${p.axisValue}</b><br>
+                Cumulative GEX: <b>${p.data.toFixed(2)}</b>
+                `
+            }
         },
 
         xAxis: {
-            type: "category", data: strikes
+            type: "category",
+            data: strikes
         },
 
         yAxis: {
@@ -1014,11 +1030,13 @@ function renderGamma(chain) {
         },
 
         series: [{
-            data: cumulative, type: "line"
+            name: "Cumulative Gamma",
+            data: cumulative,
+            type: "line",
+            smooth: true
         }]
 
     })
-
 
 }
 
@@ -1702,7 +1720,7 @@ function renderInstabilitySurface(data) {
 
 async function renderInstabilityMap() {
 
-    let res = await fetch(API + "/instability-map")
+    let res = await authFetch(`${API}/instability-map?db=${database}`)
     let data = await res.json()
 
     let points = data.map(d => {
@@ -1834,7 +1852,7 @@ function renderMarketBanner(data) {
 
 async function renderFlipZoneChart() {
 
-    let res = await fetch(API + "/flipzone")
+    let res = await authFetch(`${API}/flipzone?db=${database}`)
 
     let data = await res.json()
 
@@ -3085,7 +3103,7 @@ function renderConvexityRadar(data) {
 
 /* ---------- Initialization ---------- */
 
-window.onload = function () {
+function initDashboard() {
 
     initCharts()
     loadStocks()
@@ -3093,54 +3111,79 @@ window.onload = function () {
 
 }
 
-document.getElementById("stockSelect").addEventListener("change", function () {
+// window.onload = function () {
+//
+//     initCharts()
+//     loadStocks()
+//     renderInstabilityMap()
+//
+// }
 
-    const symbol = this.value
 
-    if (symbol) {
-        loadStock(symbol)
-    }
+async function authFetch(url) {
 
-})
-
-document.getElementById("stockSelect").addEventListener("keydown", function (e) {
-
-    if (e.key === "Enter") {
-
-        const symbol = this.value
-
-        if (symbol) {
-            loadStock(symbol)
+    return fetch(url, {
+        headers: {
+            "Authorization": "Bearer " + window.FIREBASE_TOKEN
         }
+    })
 
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+
+    let stockSelect = document.getElementById("stockSelect")
+
+    if (stockSelect) {
+        stockSelect.addEventListener("change", function () {
+            if (this.value) loadStock(this.value)
+        })
+    }
+
+    let ivSlider = document.getElementById("ivSlider")
+
+    if (ivSlider) {
+        ivSlider.addEventListener("input", function () {
+
+            let index = parseInt(this.value)
+
+            renderIVSkew(index, spotSeries, flipSeries, chainHistory[index])
+
+        })
+    }
+
+    let chainSlider = document.getElementById("chainSlider")
+
+    if (chainSlider) {
+        chainSlider.addEventListener("input", function () {
+
+            let index = parseInt(this.value)
+
+            let chain = chainHistory[index]
+
+            renderOptionStructure(index)
+            renderGammaSpatialGradient(index)
+            renderGammaConvexity(index)
+            renderGammaTemporal(index)
+            renderGammaShockSpeed(index)
+
+            renderVega(chain)
+            renderVegaExposure(chain)
+
+        })
+    }
+
+    let dbSelect = document.getElementById("dbSelect")
+
+    if (dbSelect) {
+        dbSelect.addEventListener("change", function () {
+
+            database = this.value
+
+            loadStocks()
+            renderInstabilityMap()
+
+        })
     }
 
 })
-document
-    .getElementById("ivSlider")
-    .addEventListener("input", function () {
-
-        let index = parseInt(this.value)
-
-        renderIVSkew(index, spotSeries, flipSeries, chainHistory[index])
-
-    })
-document
-    .getElementById("chainSlider")
-    .addEventListener("input", function () {
-
-        let index = parseInt(this.value)
-
-        let chain = chainHistory[index]
-
-        renderOptionStructure(index)
-        renderGammaSpatialGradient(index)
-        renderGammaConvexity(index)
-        renderGammaTemporal(index)
-        renderGammaShockSpeed(index)
-
-        renderVega(chain)
-        renderVegaExposure(chain)
-
-    })
-
