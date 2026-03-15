@@ -24,8 +24,8 @@ auth_app = firebase_admin.initialize_app(
     name="authApp"
 )
 
-def verify_token():
 
+def verify_token():
     header = request.headers.get("Authorization")
 
     if not header:
@@ -42,20 +42,20 @@ def verify_token():
     return decoded
 
 
-
 # root_ref = db.reference("vol-regime-metrics-cleaned")
 
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
 
-def get_root():
 
+def get_root():
     dbname = request.args.get("db", "cleaned")
 
     if dbname == "raw":
         return db.reference("vol-regime-metrics")
 
     return db.reference("vol-regime-metrics-cleaned")
+
 
 @app.route("/")
 def home():
@@ -259,31 +259,29 @@ def convexity_radar():
             gex = [o["net_gex"] for o in chain if o.get("net_gex")]
 
             # ---- Gamma Instability (2nd derivative) ----
-            for i in range(1, len(gex)-1):
-
+            for i in range(1, len(gex) - 1):
                 gamma_instability += abs(
-                    gex[i+1] - 2*gex[i] + gex[i-1]
+                    gex[i + 1] - 2 * gex[i] + gex[i - 1]
                 )
 
             # ---- Vanna Pressure ----
             for o in chain:
-
                 net_oi = (
-                    (o.get("call_oi",0)) -
-                    (o.get("put_oi",0))
+                        (o.get("call_oi", 0)) -
+                        (o.get("put_oi", 0))
                 )
 
-                delta = abs(o.get("call_delta",0))
+                delta = abs(o.get("call_delta", 0))
 
-                vanna = (o.get("vega",0)) * (1-delta)
+                vanna = (o.get("vega", 0)) * (1 - delta)
 
                 vanna_pressure += abs(vanna * net_oi)
 
-                dealer_flow += abs(o.get("net_gex",0))
+                dealer_flow += abs(o.get("net_gex", 0))
 
             # ---- Flip Distance ----
             if spot and flip:
-                flip_distance = abs(spot-flip)/spot
+                flip_distance = abs(spot - flip) / spot
             else:
                 flip_distance = 1
 
@@ -291,13 +289,13 @@ def convexity_radar():
 
                 "symbol": symbol,
 
-                "gamma_instability": min(gamma_instability/1e9,1),
+                "gamma_instability": min(gamma_instability / 1e9, 1),
 
-                "vanna_pressure": min(vanna_pressure/1e8,1),
+                "vanna_pressure": min(vanna_pressure / 1e8, 1),
 
-                "dealer_flow": min(dealer_flow/1e9,1),
+                "dealer_flow": min(dealer_flow / 1e9, 1),
 
-                "flip_distance": min(flip_distance*5,1),
+                "flip_distance": min(flip_distance * 5, 1),
 
                 "shock_speed": 0.5
 
@@ -305,7 +303,7 @@ def convexity_radar():
 
         except Exception as e:
 
-            print("Radar error:",symbol,e)
+            print("Radar error:", symbol, e)
 
     return jsonify(results)
 

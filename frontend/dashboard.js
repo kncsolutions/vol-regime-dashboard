@@ -1,5 +1,5 @@
 const API = "/api"
-// const API = "http://127.0.0.1:5000/api"
+//const API = "http://127.0.0.1:5000/api"
 let database = "cleaned"
 let charts = {}
 let ivHistory = []
@@ -145,7 +145,6 @@ function ensureNetGEX(chain) {
 }
 
 async function loadStock(symbol) {
-    console.log("Fetching:", API + "/dashboard/" + symbol)
 
 
     try {
@@ -198,8 +197,10 @@ async function loadStock(symbol) {
 
                 if (i > 0 && Array.isArray(chainHistory[i - 1])) {
                     chainHistory[i] = JSON.parse(JSON.stringify(chainHistory[i - 1]))
+                    chainHistory[i].time = data.time[i - 1]
                 } else {
                     chainHistory[i] = JSON.parse(JSON.stringify(data.option_chain))
+                    chainHistory[i].time = data.time[i]
                 }
 
             }
@@ -491,9 +492,15 @@ function computePhaseDiagram(chainHistory, spotSeries, flipSeries) {
 
     for (let i = 0; i < dealerFlow.length; i++) {
 
-        phase.push([flipDist[i], dealerFlow[i]])
+        phase.push({
+            value: [flipDist[i], dealerFlow[i]],
+            time: ivTimes[i],
+            spot: spotSeries[i],
+            flip: flipSeries[i]
+        })
 
     }
+
 
     return phase
 }
@@ -513,17 +520,21 @@ function renderDealerPhaseDiagram(data) {
         tooltip: {
             formatter: function (p) {
 
-                return "Flip Distance: " + p.value[0].toFixed(4) + "<br>Dealer Flow: " + p.value[1].toFixed(0)
-
+                return `
+Time: ${p.data?.time || "N/A"}<br>
+Spot: ${(Number(p.data?.spot) || 0).toFixed(2)}<br>
+Flip Distance: ${(Number(p.value?.[0]) || 0).toFixed(4)}<br>
+Dealer Flow: ${(Number(p.value?.[1]) || 0).toFixed(0)}
+`
             }
         },
 
         xAxis: {
-            name: "Distance From Gamma Flip", type: "value", axisLabel: {color: "#ccc"}
+            name: "Distance From Gamma Flip - X axis", type: "value", axisLabel: {color: "#ccc"}
         },
 
         yAxis: {
-            name: "Dealer Flow", type: "value", axisLabel: {color: "#ccc"}
+            name: "Dealer Flow - Y axis", type: "value", axisLabel: {color: "#ccc"}
         },
 
         series: [{
@@ -1645,6 +1656,7 @@ function renderInstabilitySurface(data) {
         return
     }
 
+
     let surfaceData = []
 
     for (let i = 0; i < data.time.length; i++) {
@@ -1656,8 +1668,16 @@ function renderInstabilitySurface(data) {
 
         let distance = spot - flip
 
-        surfaceData.push([distance, data.I1[i], data.I2[i], data.amplification[i]])
+        surfaceData.push([
+            distance,
+            data.I1[i],
+            data.I2[i],
+            data.amplification[i],
+            data.time[i] || "N/A"
+        ])
+
     }
+
 
     charts.instability.setOption({
 
@@ -1668,15 +1688,19 @@ function renderInstabilitySurface(data) {
         },
 
         tooltip: {
-
             formatter: function (p) {
 
+                let raw = p.value[4]
+
+                let ts = raw ? raw : "Unknown"
+
                 return `
-                Flip Distance: ${p.value[0]}<br>
-                I1: ${p.value[1]}<br>
-                I2: ${p.value[2]}<br>
-                Amplification: ${p.value[3]}
-                `
+        Time: ${ts}<br>
+        Flip Distance: ${p.value[0]}<br>
+        I1: ${p.value[1]}<br>
+        I2: ${p.value[2]}<br>
+        Amplification: ${p.value[3]}
+        `
             }
         },
 
@@ -2371,7 +2395,7 @@ function renderGammaVegaCoupling() {
     if (!chainHistory || chainHistory.length < 2) return
 
     let values = []
-    let times = ivTimes.slice(1)
+    let times = []
 
     for (let t = 1; t < chainHistory.length; t++) {
 
@@ -2414,7 +2438,10 @@ function renderGammaVegaCoupling() {
 
         let coupling = Math.abs(gammaShock) * Math.abs(totalVega * dIV)
 
+
         values.push(coupling)
+        // attach timestamp
+        times.push(chainHistory[t].time)
 
     }
 
@@ -2464,6 +2491,7 @@ function renderGammaVegaPhaseDiagram() {
 
     charts.gammaVegaPhase.clear()
 
+
     if (!chainHistory || chainHistory.length < 2) return
 
     let data = []
@@ -2509,10 +2537,18 @@ function renderGammaVegaPhaseDiagram() {
             gammaShock += (g2 - 2 * g1 + g0)
 
         }
+        data.push({
 
-        data.push([gammaShock, vegaPressure])
+            value: [gammaShock, vegaPressure],
+
+            time: ivTimes[t]
+
+
+        })
+
 
     }
+    console.log(chainHistory[1])
 
     charts.gammaVegaPhase.setOption({
 
@@ -2524,6 +2560,7 @@ function renderGammaVegaPhaseDiagram() {
 
         tooltip: {
             formatter: function (p) {
+                if (!p.value) return ""
 
                 let g = p.value[0]
                 let v = p.value[1]
@@ -2536,19 +2573,19 @@ function renderGammaVegaPhaseDiagram() {
                 if (g < 0 && v < 0) regime = "Convexity Cascade"
 
                 return `
-                Gamma: ${g.toFixed(2)}<br>
-                Vega: ${v.toFixed(2)}<br>
-                Regime: ${regime}
-                `
+        Time: ${p.data.time}<br>
+        Gamma Shock: ${p.value[0].toFixed(2)}<br>
+        Vega Pressure: ${p.value[1].toFixed(2)}<br>
+        `
             }
         },
 
         xAxis: {
-            type: "value", name: "Gamma Shock", axisLabel: {color: "#fff"}
+            type: "value", name: "Gamma Shock - X axis", axisLabel: {color: "#fff"}
         },
 
         yAxis: {
-            type: "value", name: "Vega Pressure", axisLabel: {color: "#fff"}
+            type: "value", name: "Vega Pressure - Y axis", axisLabel: {color: "#fff"}
         },
 
         series: [{
@@ -3121,6 +3158,8 @@ function initDashboard() {
 
 
 async function authFetch(url) {
+
+    // console.log('token:'+window.FIREBASE_TOKEN);
 
     return fetch(url, {
         headers: {
