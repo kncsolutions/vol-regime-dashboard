@@ -1,5 +1,5 @@
 const API = "/api"
-//const API = "http://127.0.0.1:5000/api"
+// const API = "http://127.0.0.1:5000/api"
 let database = "cleaned"
 let charts = {}
 let ivHistory = []
@@ -8,6 +8,7 @@ let ivTimes = []
 let chainHistory = []   // ← ADD THIS
 let spotSeries = []
 let flipSeries = []
+let activeStock = null
 
 function sortChainByStrike(chain) {
 
@@ -148,6 +149,8 @@ async function loadStock(symbol) {
 
 
     try {
+        activeStock = symbol
+        console.log(symbol)
 
         let res = await authFetch(`${API}/dashboard/${symbol}?db=${database}`)
         let data = await res.json()
@@ -204,6 +207,7 @@ async function loadStock(symbol) {
                 }
 
             }
+
 
             ensureNetGEX(chainHistory[i])
             sortChainByStrike(chainHistory[i])
@@ -508,50 +512,133 @@ function computePhaseDiagram(chainHistory, spotSeries, flipSeries) {
 function renderDealerPhaseDiagram(data) {
 
     charts.phaseDiagram.clear()
+    let latestPoint = data[data.length - 1]
 
     charts.phaseDiagram.setOption({
 
-        backgroundColor: "#111",
+            backgroundColor: "#111",
 
-        title: {
-            text: "Dealer Flow Phase Diagram", left: "center", textStyle: {color: "#ddd"}
-        },
+            title: {
+                text: "Dealer Flow Phase Diagram", left: "center", textStyle: {color: "#ddd"}
+            },
 
-        tooltip: {
-            formatter: function (p) {
+            tooltip: {
+                formatter: function (p) {
 
-                return `
+                    return `
 Time: ${p.data?.time || "N/A"}<br>
 Spot: ${(Number(p.data?.spot) || 0).toFixed(2)}<br>
 Flip Distance: ${(Number(p.value?.[0]) || 0).toFixed(4)}<br>
 Dealer Flow: ${(Number(p.value?.[1]) || 0).toFixed(0)}
 `
-            }
+                }
+            },
+
+            xAxis: {
+                name: "Distance From Gamma Flip - X axis", type: "value", axisLabel: {color: "#ccc"}
+            },
+
+            yAxis: {
+                name: "Dealer Flow - Y axis", type: "value", axisLabel: {color: "#ccc"}
+            },
+
+
+            series: [{
+
+                type: "scatter",
+
+                data: data,
+
+                symbolSize: 12,
+
+                itemStyle: {
+                    color: "#00E5FF"
+                },
+                markLine: {
+                    silent: true,
+                    lineStyle: {color: "#888", type: "dashed"},
+                    data: [
+                        {xAxis: 0},
+                        {yAxis: 0}
+                    ]
+                }
+
+            },
+                // 🔴 Latest point (highlighted)
+                {
+                    type: "scatter",
+                    data: [latestPoint],
+                    symbolSize: 18,
+                    itemStyle: {
+                        color: "#FF3B3B"
+                    },
+                    label: {
+                        show: true,
+                        formatter: "Latest",
+                        color: "#fff",
+                        position: "top"
+                    }
+                },
+            ],
+            graphic: [
+
+                // +X, +Y (top-right)
+                {
+                    type: "text",
+                    left: "75%",
+                    top: "15%",
+                    z: 100,
+                    style: {
+                        text: "Stable\n(Long Gamma + Buying)",
+                        fill: "#00FF9C",
+                        font: "12px sans-serif",
+                        textAlign: "center"
+                    }
+                },
+
+                // -X, +Y (top-left)
+                {
+                    type: "text",
+                    left: "10%",
+                    top: "15%",
+                    style: {
+                        text: "Squeeze\n(Short Gamma + Buying)",
+                        fill: "#FFD700",
+                        font: "12px sans-serif",
+                        textAlign: "center"
+                    }
+                },
+
+                // -X, -Y (bottom-left)
+                {
+                    type: "text",
+                    left: "10%",
+                    top: "75%",
+                    style: {
+                        text: "Crash Risk\n(Short Gamma + Selling)",
+                        fill: "#FF3B3B",
+                        font: "12px sans-serif",
+                        textAlign: "center"
+                    }
+                },
+
+                // +X, -Y (bottom-right)
+                {
+                    type: "text",
+                    left: "75%",
+                    top: "75%",
+                    style: {
+                        text: "Mean Reversion\n(Long Gamma + Selling)",
+                        fill: "#00BFFF",
+                        font: "12px sans-serif",
+                        textAlign: "center"
+                    }
+                }
+
+            ]
+
         },
-
-        xAxis: {
-            name: "Distance From Gamma Flip - X axis", type: "value", axisLabel: {color: "#ccc"}
-        },
-
-        yAxis: {
-            name: "Dealer Flow - Y axis", type: "value", axisLabel: {color: "#ccc"}
-        },
-
-        series: [{
-
-            type: "scatter",
-
-            data: data,
-
-            symbolSize: 12,
-
-            itemStyle: {
-                color: "#00E5FF"
-            }
-
-        }]
-
-    })
+    )
 }
 
 function renderCharmExposure(chain) {
@@ -976,11 +1063,14 @@ function renderLine(chart, x, y, title) {
         },
 
         yAxis: {
-            type: "value"
+            type: "value",
+            scale: true,
+            boundaryGap: ['5%', '5%']
         },
 
         series: [{
-            data: y, type: "line", smooth: true
+            data: y, type: "line", smooth: true,
+
         }]
 
     })
@@ -2019,7 +2109,10 @@ function renderIVSkew(index, spotSeries, flipSeries, latestChain) {
         },
 
         yAxis: {
-            type: "value", name: "IV", axisLabel: {color: "#fff"}
+            type: "value", name: "IV", axisLabel: {color: "#fff"},
+            scale: true,
+            boundaryGap: ['5%', '5%']
+
         },
 
         series: [{
@@ -2441,9 +2534,10 @@ function renderGammaVegaCoupling() {
 
         values.push(coupling)
         // attach timestamp
-        times.push(chainHistory[t].time)
+        times.push(ivTimes[t])
 
     }
+    // console.log(times)
 
     charts.gammaVegaCoupling.setOption({
 
@@ -2485,6 +2579,24 @@ function renderGammaVegaCoupling() {
 
     })
 
+}
+
+function generateCirclePoints(radius) {
+
+    let points = []
+    let steps = 100
+
+    for (let i = 0; i <= steps; i++) {
+
+        let theta = (i / steps) * 2 * Math.PI
+
+        let x = radius * Math.cos(theta)
+        let y = radius * Math.sin(theta)
+
+        points.push([x, y])
+    }
+
+    return points
 }
 
 function renderGammaVegaPhaseDiagram() {
@@ -2537,18 +2649,48 @@ function renderGammaVegaPhaseDiagram() {
             gammaShock += (g2 - 2 * g1 + g0)
 
         }
+        // ----- VALIDATION -----
+        if (!isFinite(gammaShock) || !isFinite(vegaPressure)) continue
+
+        if (!ivTimes || !ivTimes[t]) continue
+
         data.push({
-
             value: [gammaShock, vegaPressure],
-
             time: ivTimes[t]
-
-
         })
 
 
     }
-    console.log(chainHistory[1])
+
+    let maxAbsX = Math.max(...data.map(d => Math.abs(d.value[0])))
+    let maxAbsY = Math.max(...data.map(d => Math.abs(d.value[1])))
+    let magnitudes = data.map(d => {
+        let g = d.value[0]
+        let v = d.value[1]
+        return Math.sqrt(g * g + v * v)
+    })
+    let latest = data[data.length - 1]
+
+    let latestMag = Math.sqrt(
+        latest.value[0] * latest.value[0] +
+        latest.value[1] * latest.value[1]
+    )
+
+
+// choose threshold (e.g. 80th percentile)
+    let sorted = [...magnitudes].sort((a, b) => a - b)
+    let threshold = sorted[Math.floor(sorted.length * 0.8)]
+    let isDanger = latestMag > threshold
+    let R = Math.sqrt(
+        latest.value[0] ** 2 + latest.value[1] ** 2
+    )
+    let inner = 0.5 * threshold     // 🟢 stable
+    let outer = threshold
+    let regime =
+        R < inner ? "innre - STABLE" :
+            R < outer ? "on circumference - TRANSITION" :
+                "outer - INSTABILITY"
+    // 🔴 boundary
 
     charts.gammaVegaPhase.setOption({
 
@@ -2580,33 +2722,82 @@ function renderGammaVegaPhaseDiagram() {
             }
         },
 
+
         xAxis: {
-            type: "value", name: "Gamma Shock - X axis", axisLabel: {color: "#fff"}
+            type: "value",
+            min: -maxAbsX * 1.2,
+            max: maxAbsX * 1.2,
+            axisLabel: {color: "#fff"}
         },
 
         yAxis: {
-            type: "value", name: "Vega Pressure - Y axis", axisLabel: {color: "#fff"}
+            type: "value",
+            min: -maxAbsY * 1.2,
+            max: maxAbsY * 1.2,
+            axisLabel: {color: "#fff"}
         },
 
-        series: [{
+        series: [
 
-            type: "scatter",
-
-            data: data,
-
-            symbolSize: 10,
-
-            itemStyle: {
-                color: "#00c8ff"
+            {
+                type: "scatter",
+                data: data,
+                symbolSize: function (val, params) {
+                    return params.dataIndex === data.length - 1 ? 16 : 8
+                },
+                itemStyle: {
+                    color: "#00c8ff",
+                    opacity: 0.6
+                },
+                markLine: {
+                    symbol: "none",
+                    lineStyle: {color: "#888", type: "dashed"},
+                    data: [{xAxis: 0}, {yAxis: 0}]
+                }
             },
 
-            markLine: {
-                symbol: "none", lineStyle: {
-                    color: "#888", type: "dashed"
-                }, data: [{xAxis: 0}, {yAxis: 0}]
+            // 🔴 explicit latest point
+            {
+                type: "scatter",
+                data: [latest],
+                symbolSize: 22,
+                z: 100,
+                zlevel: 10,
+
+                itemStyle: {
+                    color:
+                        R < inner ? "#00ff9c" :
+                            R < outer ? "#ffd700" :
+                                "#ff3b3b",
+                    shadowBlur: 20,
+                    shadowColor:
+                        R < inner ? "#00ff9c" :
+                            R < outer ? "#ffd700" :
+                                "#ff3b3b"
+                },
+
+                label: {
+                    show: true,
+                    formatter: regime,
+                    color: "#fff",
+                    position: "top",
+                    fontWeight: "bold"
+                }
+            },
+            {
+                type: "line",
+                data: generateCirclePoints(threshold),
+                smooth: true,
+                showSymbol: false,
+                lineStyle: {
+                    color: "#ff4d4d",
+                    width: 2,
+                    type: "dashed"
+                },
+                z: 5
             }
 
-        }],
+        ],
 
         graphic: [
 
@@ -2643,6 +2834,20 @@ function renderGammaVegaPhaseDiagram() {
                     fill: "#ff4d4d",
                     font: "14px sans-serif",
                     textAlign: "center"
+                }
+            },
+            {
+                type: "text",
+                left: 20,
+                top: 20,
+                z: 100,
+                style: {
+                    text:
+                        `Stable - Mean Reversion
+Transition - Watch
+Instability - Breakout`,
+                    fill: "#ddd",
+                    font: "12px monospace"
                 }
             }
 
@@ -3138,6 +3343,98 @@ function renderConvexityRadar(data) {
 
 }
 
+
+/*---------------Snapshot Tab..................*/
+
+function loadSnapshots(dataArray) {
+
+
+    const container = document.getElementById("snapshotContainer")
+
+    renderSnapshotsList(dataArray)
+}
+
+let snapshotCache = {}
+
+async function fetchSnapshot() {
+
+    try {
+
+        const res = await authFetch(`${API}/latest/${activeStock}`)
+        const json = await res.json()
+        console.log("json.data =", json.data)
+
+        if (!res.ok || json.error || !json.data) {
+            console.error("Invalid snapshot")
+            return []
+        }
+        const data = json.data || json
+
+// renderDebugTable(data)   // 🔥 ADD THIS
+
+// return [data]
+
+
+        return [json.data]   // ✅ THIS FIXES EVERYTHING
+
+    } catch (err) {
+        console.error(err)
+        return []
+    }
+}
+
+function switchTab(tabId, el) {
+    console.log('Active Stock:' + activeStock)
+    // remove active from all tabs
+    document.querySelectorAll(".tab").forEach(tab => {
+        tab.classList.remove("active")
+    })
+
+    // remove active from all contents
+    document.querySelectorAll(".tab-content").forEach(tab => {
+        tab.classList.remove("active")
+    })
+
+    // activate selected tab
+    document.getElementById(tabId).classList.add("active")
+    el.classList.add("active")
+
+    // -----------------------------
+    // 🔥 LOAD SNAPSHOTS ON DEMAND
+    // -----------------------------
+    if (tabId === "snapshotsTab") {
+
+        if (!activeStock) return
+
+        const container = document.getElementById("snapshotContainer")
+
+        // show loading state
+        container.innerHTML = `<p style="color:#888">Loading snapshots...</p>`
+
+        fetchSnapshot(activeStock)
+            .then(data => {
+
+                if (!data || data.length === 0) {
+                    container.innerHTML = `<p style="color:#888">No snapshot available</p>`
+                    return
+                }
+
+                loadSnapshots(data)
+            })
+    }
+
+    // -----------------------------
+    // Resize charts (important)
+    // -----------------------------
+    setTimeout(() => {
+        Object.values(charts).forEach(chart => {
+            if (chart && chart.resize) {
+                chart.resize()
+            }
+        })
+    }, 200)
+}
+
 /* ---------- Initialization ---------- */
 
 function initDashboard() {
@@ -3145,6 +3442,7 @@ function initDashboard() {
     initCharts()
     loadStocks()
     renderInstabilityMap()
+    console.log("Dashboard loaded")
 
 }
 
@@ -3226,3 +3524,5 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
 })
+
+window.switchTab = switchTab

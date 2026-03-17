@@ -3,18 +3,19 @@
 <html>
 
 <head>
-     <script src="https://cdn.jsdelivr.net/npm/echarts/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts/dist/echarts.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/echarts-gl/dist/echarts-gl.min.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
 
     <script src="auth.js"></script>
-    <script src="dashboard.js"></script>
+
 
 
 
     <link rel="stylesheet" href="style.css">
+
 
 </head>
 
@@ -22,399 +23,446 @@
 <div id="loading">Loading dashboard...</div>
 <div id="dashboard" style="display:none">
 
-<div id="topBar">
+    <div id="topBar">
 
-    <div id="title">Volatility Regime Dashboard</div>
+        <div id="title">Volatility Regime Dashboard</div>
 
-    <button id="logoutBtn" onclick="logout()">Logout</button>
+        <button id="logoutBtn" onclick="logout()">Logout</button>
 
-</div>
-<div id="marketBanner" class="market-banner"></div>
-<div style="margin:10px 0">
-
-    <label style="color:white">Database:</label>
-
-    <select id="dbSelect">
-        <option value="cleaned">Cleaned Metrics</option>
-        <option value="raw">Raw Metrics</option>
-    </select>
-
-</div>
-<div class="stock-selector">
-
-    <label>Select Stock:</label>
-
-    <input list="stockList" id="stockSelect" placeholder="Type or select stock..."/>
-
-    <datalist id="stockList"></datalist>
-
-</div>
-
-<div class="grid">
-
-    <div id="spotChart" class="chart"></div>
-    <div id="ivChart" class="chart"></div>
-    <div id="hvChart" class="chart"></div>
-
-    <div id="flipChart" class="chart"></div>
-    <div id="kChart" class="chart"></div>
-    <div id="bprChart" class="chart"></div>
-
-    <div id="i1Chart" class="chart"></div>
-    <div id="i2Chart" class="chart"></div>
-    <div id="ampChart" class="chart"></div>
-
-    <div id="fragilityChart" class="chart"></div>
-
-</div>
-
-<h3>Market State</h3>
-
-<p>
-    <b>Definition:</b> IV Skew measures how implied volatility varies across option strikes.
-    <b>Discussion:</b> A steep downside skew usually indicates strong demand for downside protection,
-    while a flat skew suggests balanced market expectations.
-</p>
-
-<style>
-
-    .collapsible {
-        margin: 20px 0;
-        border: 1px solid #222;
-        border-radius: 6px;
-        background: #111;
-        overflow: hidden;
-    }
-
-    .collapsible-header {
-        padding: 10px;
-        cursor: pointer;
-        color: #ddd;
-        background: #1a1a1a;
-        font-weight: bold;
-        display: flex;
-        justify-content: space-between;
-    }
-
-    .collapsible-body {
-        padding: 10px;
-    }
-
-    .collapsible-body.collapsed {
-        display: none;
-    }
-
-    .toggle-icon {
-        color: #888;
-    }
-
-    .chart {
-        height: 400px;
-        width: 100%;
-    }
-
-</style>
-
-
-<script>
-
-    function toggleSection(header) {
-
-        const body = header.nextElementSibling
-        const icon = header.querySelector(".toggle-icon")
-
-        body.classList.toggle("collapsed")
-
-        if (body.classList.contains("collapsed")) {
-            icon.innerText = "+"
-        } else {
-
-            icon.innerText = "-"
-
-            // allow DOM to render
-            setTimeout(() => {
-
-                Object.values(charts).forEach(chart => {
-                    if (chart && chart.resize) {
-                        chart.resize()
-                    }
-                })
-
-            }, 200)
-
-        }
-
-    }
-
-</script>
-
-
-<!-- IV SKEW -->
-
-<div class="collapsible">
-
-    <div class="collapsible-header" onclick="toggleSection(this)">
-        IV Skew
-        <span class="toggle-icon">-</span>
     </div>
+    <div id="marketBanner" class="market-banner"></div>
+    <div style="margin:10px 0">
 
-    <div class="collapsible-body collapsed">
+        <label style="color:white">Database:</label>
 
-        <div id="ivSkewChart" style="height:420px"></div>
+        <select id="dbSelect">
+            <option value="cleaned">Cleaned Metrics</option>
+            <option value="raw">Raw Metrics</option>
+        </select>
 
-        <input
-                type="range"
-                id="ivSlider"
-                min="0"
-                max="0"
-                step="1"
-                value="0"
-                style="width:100%;margin-top:10px"
-        >
+    </div>
+    <div class="stock-selector">
 
-        <div id="ivTimeLabel" style="color:white;margin-top:6px"></div>
+        <label>Select Stock:</label>
+
+        <input list="stockList" id="stockSelect" placeholder="Type or select stock..."/>
+
+        <datalist id="stockList"></datalist>
+
+    </div>
+    <div class="tab-bar">
+
+        <div class="tab active" data-tab="chartsTab">Charts</div>
+        <div class="tab" data-tab="snapshotsTab">Snapshots</div>
 
     </div>
 
-</div>
+    <!-- TAB CONTENT -->
 
+    <div id="chartsTab" class="tab-content active">
+        <!-- EXISTING DASHBOARD CONTENT START -->
 
-<!-- INSTABILITY SURFACE -->
+        <div class="grid">
 
-<div class="collapsible">
+            <div id="spotChart" class="chart"></div>
+            <div id="ivChart" class="chart"></div>
+            <div id="hvChart" class="chart"></div>
 
-    <div class="collapsible-header" onclick="toggleSection(this)">
-        Instability Surface
-        <span class="toggle-icon">-</span>
-    </div>
+            <div id="flipChart" class="chart"></div>
+            <div id="kChart" class="chart"></div>
+            <div id="bprChart" class="chart"></div>
 
-    <div class="collapsible-body collapsed">
+            <div id="i1Chart" class="chart"></div>
+            <div id="i2Chart" class="chart"></div>
+            <div id="ampChart" class="chart"></div>
+
+            <div id="fragilityChart" class="chart"></div>
+
+        </div>
+
+        <h3>Market State</h3>
 
         <p>
-            <b>Definition:</b> The instability surface aggregates multiple indicators of market stress.
-            <b>Discussion:</b> High values may indicate regions where small price moves can trigger
-            large hedging flows or volatility expansion.
+            <b>Definition:</b> IV Skew measures how implied volatility varies across option strikes.
+            <b>Discussion:</b> A steep downside skew usually indicates strong demand for downside protection,
+            while a flat skew suggests balanced market expectations.
         </p>
 
-        <div id="instabilitySurface" style="height:600px"></div>
+        <style>
 
-    </div>
+            .collapsible {
+                margin: 20px 0;
+                border: 1px solid #222;
+                border-radius: 6px;
+                background: #111;
+                overflow: hidden;
+            }
 
-</div>
+            .collapsible-header {
+                padding: 10px;
+                cursor: pointer;
+                color: #ddd;
+                background: #1a1a1a;
+                font-weight: bold;
+                display: flex;
+                justify-content: space-between;
+            }
+
+            .collapsible-body {
+                padding: 10px;
+            }
+
+            .collapsible-body.collapsed {
+                display: none;
+            }
+
+            .toggle-icon {
+                color: #888;
+            }
+
+            .chart {
+                height: 400px;
+                width: 100%;
+            }
+
+        </style>
 
 
-<!-- OPTION STRUCTURE TIMELINE -->
+        <script>
 
-<div class="collapsible">
+            function toggleSection(header) {
 
-    <div class="collapsible-header" onclick="toggleSection(this)">
-        Option Structure Timeline
-        <span class="toggle-icon">-</span>
-    </div>
+                const body = header.nextElementSibling
+                const icon = header.querySelector(".toggle-icon")
 
-    <div class="collapsible-body collapsed">
+                body.classList.toggle("collapsed")
+
+                if (body.classList.contains("collapsed")) {
+                    icon.innerText = "+"
+                } else {
+
+                    icon.innerText = "-"
+
+                    // allow DOM to render
+                    setTimeout(() => {
+
+                        Object.values(charts).forEach(chart => {
+                            if (chart && chart.resize) {
+                                chart.resize()
+                            }
+                        })
+
+                    }, 200)
+
+                }
+
+            }
+
+            document.addEventListener("DOMContentLoaded", function () {
+
+    document.querySelectorAll(".tab").forEach(tab => {
+
+        tab.addEventListener("click", function () {
+
+            console.log("TAB CLICK:", this.dataset.tab)
+
+            switchTab(this.dataset.tab, this)
+
+        })
+
+    })
+
+})
+
+
+
+
+        </script>
+
+
+        <!-- IV SKEW -->
+
+        <div class="collapsible">
+
+            <div class="collapsible-header" onclick="toggleSection(this)">
+                IV Skew
+                <span class="toggle-icon">-</span>
+            </div>
+
+            <div class="collapsible-body collapsed">
+
+                <div id="ivSkewChart" style="height:420px"></div>
+
+                <input
+                        type="range"
+                        id="ivSlider"
+                        min="0"
+                        max="0"
+                        step="1"
+                        value="0"
+                        style="width:100%;margin-top:10px"
+                >
+
+                <div id="ivTimeLabel" style="color:white;margin-top:6px"></div>
+
+            </div>
+
+        </div>
+
+
+        <!-- INSTABILITY SURFACE -->
+
+        <div class="collapsible">
+
+            <div class="collapsible-header" onclick="toggleSection(this)">
+                Instability Surface
+                <span class="toggle-icon">-</span>
+            </div>
+
+            <div class="collapsible-body collapsed">
+
+                <p>
+                    <b>Definition:</b> The instability surface aggregates multiple indicators of market stress.
+                    <b>Discussion:</b> High values may indicate regions where small price moves can trigger
+                    large hedging flows or volatility expansion.
+                </p>
+
+                <div id="instabilitySurface" style="height:600px"></div>
+
+            </div>
+
+        </div>
+
+
+        <!-- OPTION STRUCTURE TIMELINE -->
+
+        <div class="collapsible">
+
+            <div class="collapsible-header" onclick="toggleSection(this)">
+                Option Structure Timeline
+                <span class="toggle-icon">-</span>
+            </div>
+
+            <div class="collapsible-body collapsed">
+
+                <p>
+                    <b>Definition:</b> The timeline slider allows viewing historical snapshots of the option chain.
+                    <b>Discussion:</b> Tracking structural changes in open interest and gamma through time
+                    helps identify shifts in market positioning.
+                </p>
+
+                <input
+                        type="range"
+                        id="chainSlider"
+                        min="0"
+                        max="0"
+                        step="1"
+                        value="0"
+                        style="width:100%;margin-top:10px"
+                >
+
+                <div id="chainTimeLabel" style="color:white;margin-top:6px"></div>
+
+            </div>
+
+        </div>
+
+
+        <!-- OPTION STRUCTURE -->
+
+        <div class="collapsible">
+
+            <div class="collapsible-header" onclick="toggleSection(this)">
+                Option Structure
+                <span class="toggle-icon">-</span>
+            </div>
+
+            <div class="collapsible-body collapsed">
+
+                <p><b>Definition:</b> Open Interest Distribution shows the number of outstanding option contracts at
+                    each
+                    strike.</p>
+                <div id="oiDist" class="chart"></div>
+
+                <p><b>Definition:</b> Open Interest Change shows how positions increase or decrease across strikes.</p>
+                <div id="oiChange" class="chart"></div>
+
+                <p><b>Definition:</b> Gamma Ladder shows how gamma sensitivity varies across strikes.</p>
+                <div id="gammaLadder" class="chart"></div>
+
+                <p><b>Definition:</b> Gamma Exposure measures the net gamma held by dealers across strikes.</p>
+                <div id="gammaExposure" class="chart"></div>
+
+                <p><b>Definition:</b> Vega Ladder shows volatility sensitivity of options across strikes.</p>
+                <div id="vegaLadder" class="chart"></div>
+
+                <p><b>Definition:</b> Vega Exposure measures aggregate volatility risk across the option chain.</p>
+                <div id="vegaExposure" class="chart"></div>
+
+                <p><b>Definition:</b> Gamma Walls are strikes where gamma exposure peaks significantly.</p>
+                <div id="gammaWallMap" class="chart"></div>
+
+                <p><b>Definition:</b> Dealer Heatmap visualizes intensity of positioning across strikes.</p>
+                <div id="dealerHeatmap" class="chart"></div>
+
+            </div>
+
+        </div>
+
+
+        <!-- DEALER HEDGING MECHANICS -->
+
+        <div class="collapsible">
+
+            <div class="collapsible-header" onclick="toggleSection(this)">
+                Dealer Hedging Mechanics
+                <span class="toggle-icon">-</span>
+            </div>
+
+            <div class="collapsible-body collapsed">
+
+                <p><b>Definition:</b> Hedging Pressure estimates directional pressure generated by dealer delta hedging.
+                </p>
+                <div id="hedgingPressure" class="chart"></div>
+
+                <p><b>Definition:</b> Volatility Hedging Pressure measures how dealers hedge volatility exposure.</p>
+                <div id="volHedgePressure" class="chart"></div>
+
+                <p><b>Definition:</b> Volatility Hedging Requirement estimates the amount of volatility exposure that
+                    must be
+                    hedged.</p>
+                <div id="volHedgeRequirement" class="chart"></div>
+
+                <p><b>Definition:</b> Gamma Spatial Gradient measures how quickly gamma exposure changes across strikes.
+                </p>
+                <div id="gammaSpatialGradient" class="chart"></div>
+
+                <p><b>Definition:</b> Gamma Convexity measures curvature of gamma exposure across strikes.</p>
+                <div id="gammaConvexity" class="chart"></div>
+
+                <p><b>Definition:</b> Gamma Temporal Gradient measures how gamma exposure evolves over time.</p>
+                <div id="gammaTemporalGradient" class="chart"></div>
+
+                <p><b>Definition:</b> Gamma Shock Speed measures the acceleration of dealer hedging flows.</p>
+                <div id="gammaShockSpeed" style="height:350px;width:100%"></div>
+
+            </div>
+
+        </div>
+
+
+        <!-- GREEK INTERACTION -->
+
+        <div class="collapsible">
+
+            <div class="collapsible-header" onclick="toggleSection(this)">
+                Greek Interaction Dynamics
+                <span class="toggle-icon">-</span>
+            </div>
+
+            <div class="collapsible-body collapsed">
+
+                <div id="gammaVegaCoupling" class="chart"></div>
+
+                <div id="gammaVegaPhase" class="chart"></div>
+
+                <div id="vannaExposure" class="chart"></div>
+
+                <div id="vannaFlowChart" class="chart"></div>
+
+                <div id="charmExposure" class="chart"></div>
+
+                <div id="charmWall" class="chart"></div>
+
+                <div id="charmFlow" class="chart"></div>
+
+                <div id="charmDrift" class="chart"></div>
+
+                <div id="vommaWall" class="chart"></div>
+
+            </div>
+
+        </div>
+
+
+        <!-- DEALER FLOW FIELD -->
+
+        <div class="collapsible">
+
+            <div class="collapsible-header" onclick="toggleSection(this)">
+                Dealer Flow Field
+                <span class="toggle-icon">-</span>
+            </div>
+
+            <div class="collapsible-body collapsed">
+
+                <div id="dealerFlowMap" class="chart"></div>
+
+                <div id="gammaVannaSurface" style="height:500px;width:100%"></div>
+
+                <div id="dealerConvexitySurface" style="height:600px;width:70%"></div>
+
+                <div id="tensorMap" class="chart"></div>
+
+            </div>
+
+        </div>
 
         <p>
-            <b>Definition:</b> The timeline slider allows viewing historical snapshots of the option chain.
-            <b>Discussion:</b> Tracking structural changes in open interest and gamma through time
-            helps identify shifts in market positioning.
+            <b>Definition:</b> The Phase Diagram summarizes current market regime based on multiple greek interactions.
+            <b>Discussion:</b> It helps identify transitions between stable and unstable market states.
         </p>
 
-        <input
-                type="range"
-                id="chainSlider"
-                min="0"
-                max="0"
-                step="1"
-                value="0"
-                style="width:100%;margin-top:10px"
-        >
-
-        <div id="chainTimeLabel" style="color:white;margin-top:6px"></div>
+        <div id="phaseDiagram" class="chart"></div>
 
     </div>
+    <div id="snapshotsTab" class="tab-content">
 
+        <h3 style="color:white">Snapshots</h3>
+
+        <p style="color:#aaa">
+            Volatility Regime Snapshot
+        </p>
+
+        <div id="snapshotContainer" class="grid">
+            <!-- Future snapshot charts go here -->
+        </div>
+
+    </div>
+    <h3>Market Instability Map</h3>
+
+    <div id="instabilityMap" style="height:600px"></div>
+
+    <h3>Stocks Near Gamma Flip ((+/-)2%)</h3>
+
+    <div id="flipZoneChart" style="height:400px"></div>
+
+    <div id="gammaExplosionRanking" style="height:400px;width:100%"></div>
+
+    <div id="convexityRadar" style="height:650px;width:100%"></div>
+
+
+    <footer class="dashboard-footer">
+
+        <hr>
+
+        <div class="footer-title">
+            Volatility Regime Monitoring System
+        </div>
+
+
+        <div class="footer-source">
+            Data Source: proprietary
+        </div>
+
+        <div class="footer-author">
+            Developed by Pallav Nandi Chaudhuri
+        </div>
+
+    </footer>
 </div>
-
-
-<!-- OPTION STRUCTURE -->
-
-<div class="collapsible">
-
-    <div class="collapsible-header" onclick="toggleSection(this)">
-        Option Structure
-        <span class="toggle-icon">-</span>
-    </div>
-
-    <div class="collapsible-body collapsed">
-
-        <p><b>Definition:</b> Open Interest Distribution shows the number of outstanding option contracts at each
-            strike.</p>
-        <div id="oiDist" class="chart"></div>
-
-        <p><b>Definition:</b> Open Interest Change shows how positions increase or decrease across strikes.</p>
-        <div id="oiChange" class="chart"></div>
-
-        <p><b>Definition:</b> Gamma Ladder shows how gamma sensitivity varies across strikes.</p>
-        <div id="gammaLadder" class="chart"></div>
-
-        <p><b>Definition:</b> Gamma Exposure measures the net gamma held by dealers across strikes.</p>
-        <div id="gammaExposure" class="chart"></div>
-
-        <p><b>Definition:</b> Vega Ladder shows volatility sensitivity of options across strikes.</p>
-        <div id="vegaLadder" class="chart"></div>
-
-        <p><b>Definition:</b> Vega Exposure measures aggregate volatility risk across the option chain.</p>
-        <div id="vegaExposure" class="chart"></div>
-
-        <p><b>Definition:</b> Gamma Walls are strikes where gamma exposure peaks significantly.</p>
-        <div id="gammaWallMap" class="chart"></div>
-
-        <p><b>Definition:</b> Dealer Heatmap visualizes intensity of positioning across strikes.</p>
-        <div id="dealerHeatmap" class="chart"></div>
-
-    </div>
-
-</div>
-
-
-<!-- DEALER HEDGING MECHANICS -->
-
-<div class="collapsible">
-
-    <div class="collapsible-header" onclick="toggleSection(this)">
-        Dealer Hedging Mechanics
-        <span class="toggle-icon">-</span>
-    </div>
-
-    <div class="collapsible-body collapsed">
-
-        <p><b>Definition:</b> Hedging Pressure estimates directional pressure generated by dealer delta hedging.</p>
-        <div id="hedgingPressure" class="chart"></div>
-
-        <p><b>Definition:</b> Volatility Hedging Pressure measures how dealers hedge volatility exposure.</p>
-        <div id="volHedgePressure" class="chart"></div>
-
-        <p><b>Definition:</b> Volatility Hedging Requirement estimates the amount of volatility exposure that must be
-            hedged.</p>
-        <div id="volHedgeRequirement" class="chart"></div>
-
-        <p><b>Definition:</b> Gamma Spatial Gradient measures how quickly gamma exposure changes across strikes.</p>
-        <div id="gammaSpatialGradient" class="chart"></div>
-
-        <p><b>Definition:</b> Gamma Convexity measures curvature of gamma exposure across strikes.</p>
-        <div id="gammaConvexity" class="chart"></div>
-
-        <p><b>Definition:</b> Gamma Temporal Gradient measures how gamma exposure evolves over time.</p>
-        <div id="gammaTemporalGradient" class="chart"></div>
-
-        <p><b>Definition:</b> Gamma Shock Speed measures the acceleration of dealer hedging flows.</p>
-        <div id="gammaShockSpeed" style="height:350px;width:100%"></div>
-
-    </div>
-
-</div>
-
-
-<!-- GREEK INTERACTION -->
-
-<div class="collapsible">
-
-    <div class="collapsible-header" onclick="toggleSection(this)">
-        Greek Interaction Dynamics
-        <span class="toggle-icon">-</span>
-    </div>
-
-    <div class="collapsible-body collapsed">
-
-        <div id="gammaVegaCoupling" class="chart"></div>
-
-        <div id="gammaVegaPhase" class="chart"></div>
-
-        <div id="vannaExposure" class="chart"></div>
-
-        <div id="vannaFlowChart" class="chart"></div>
-
-        <div id="charmExposure" class="chart"></div>
-
-        <div id="charmWall" class="chart"></div>
-
-        <div id="charmFlow" class="chart"></div>
-
-        <div id="charmDrift" class="chart"></div>
-
-        <div id="vommaWall" class="chart"></div>
-
-    </div>
-
-</div>
-
-
-<!-- DEALER FLOW FIELD -->
-
-<div class="collapsible">
-
-    <div class="collapsible-header" onclick="toggleSection(this)">
-        Dealer Flow Field
-        <span class="toggle-icon">-</span>
-    </div>
-
-    <div class="collapsible-body collapsed">
-
-        <div id="dealerFlowMap" class="chart"></div>
-
-        <div id="gammaVannaSurface" style="height:500px;width:100%"></div>
-
-        <div id="dealerConvexitySurface" style="height:600px;width:70%"></div>
-
-        <div id="tensorMap" class="chart"></div>
-
-    </div>
-
-</div>
-
-<p>
-    <b>Definition:</b> The Phase Diagram summarizes current market regime based on multiple greek interactions.
-    <b>Discussion:</b> It helps identify transitions between stable and unstable market states.
-</p>
-
-<div id="phaseDiagram" class="chart"></div>
-
-
-<h3>Market Instability Map</h3>
-
-<div id="instabilityMap" style="height:600px"></div>
-
-<h3>Stocks Near Gamma Flip ((+/-)2%)</h3>
-
-<div id="flipZoneChart" style="height:400px"></div>
-
-<div id="gammaExplosionRanking" style="height:400px;width:100%"></div>
-
-<div id="convexityRadar" style="height:650px;width:100%"></div>
-
-
-
-
-<footer class="dashboard-footer">
-
-    <hr>
-
-    <div class="footer-title">
-        Volatility Regime Monitoring System
-    </div>
-
-
-    <div class="footer-source">
-        Data Source: proprietary
-    </div>
-
-    <div class="footer-author">
-        Developed by Pallav Nandi Chaudhuri
-    </div>
-
-</footer>
-</div>
+<script src="dashboard.js"></script>
+    <script src="snapshotRenderer.js"></script>
 </body>
 
 </html>

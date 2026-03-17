@@ -432,6 +432,30 @@ def dashboard(symbol):
 
     return jsonify(response)
 
+@app.route("/api/latest/<stock_id>", methods=["GET"])
+def get_latest_snapshot(stock_id):
+    user = verify_token()
+
+    try:
+        ref = db.reference(f"vol-regime-states/{stock_id}/states")
+        data = ref.get()
+
+        if not data:
+            return jsonify({"error": "No data found"}), 404
+
+        # ✅ data = { timestamp: snapshot }
+        latest_ts = sorted(data.keys())[-1]
+        latest_snapshot = data[latest_ts]
+
+        return jsonify({
+            "stock_id": stock_id,
+            "timestamp": latest_ts,
+            "data": latest_snapshot   # ✅ SINGLE object
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route("/api/test")
 def test():
