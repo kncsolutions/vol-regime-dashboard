@@ -159,9 +159,9 @@ async function loadStock(symbol) {
             console.warn("No data returned for", symbol)
             return
         }
-
+        // console.log("Step 1")
         renderMarketBanner(data)
-
+        // console.log("Step 2")
         renderLine(charts.spot, data.time, data.spot, "Spot")
         renderLine(charts.iv, data.time, data.iv, "IV")
         renderLine(charts.hv, data.time, data.hv, "HV")
@@ -178,10 +178,16 @@ async function loadStock(symbol) {
         renderLine(charts.amp, data.time, data.amplification, "Amplification")
 
         renderLine(charts.frag, data.time, data.fragility, "Fragility")
+        // console.log("Calling renderGamma...", data.option_chain)
+        try {
 
+            renderGammaLadder(data.option_chain)
+        } catch (err) {
 
-        renderGamma(data.option_chain)
+            console.error("🔥 loadStock crashed BEFORE renderGamma:", err)
 
+        }
+        // console.log("🔥 AFTER renderGamma CALL")
 
         renderOI(data.option_chain)
         renderOIChange(data.option_chain)
@@ -288,6 +294,9 @@ async function loadStock(symbol) {
         loadGammaExplosionRanking()
         renderFlipZoneChart()
         loadConvexityRadar()
+
+        // 🔥 LOAD SNAPSHOTS IN BACKGROUND
+        loadSnapshotsForStock(symbol)
 
 
     } catch (err) {
@@ -400,36 +409,52 @@ function computeCharmDrift(chainHistory, spotSeries) {
 
     for (let i = 1; i < chainHistory.length; i++) {
 
-        let chain = chainHistory[i]
+        let chainNow = chainHistory[i]
+        let chainPrev = chainHistory[i - 1]
 
-        let gammaTotal = 0
-        let charmTotal = 0
+        if (!chainNow || !chainPrev) {
+            dealerFlow.push(0)
+            continue
+        }
 
-        chain.forEach(row => {
+        // 🔥 Build previous strike map
+        let prevMap = {}
+
+        chainPrev.forEach(o => {
+            if (o && o.strike != null) {
+                prevMap[o.strike] = o
+            }
+        })
+
+        let dS = spotSeries[i] - spotSeries[i - 1]
+
+        let gammaFlow = 0
+        let charmFlow = 0
+
+        chainNow.forEach(row => {
+
+            if (!row || row.strike == null) return
+
+            let prev = prevMap[row.strike]
+
+            // 🔥 Only common strikes
+            if (!prev) return
 
             let gamma = Number(row.gamma) || 0
-
             let callOI = Number(row.call_oi) || 0
             let putOI = Number(row.put_oi) || 0
 
             let callTheta = Number(row.call_theta) || 0
             let putTheta = Number(row.put_theta) || 0
 
-            gammaTotal += gamma * (callOI + putOI) * 100
-            charmTotal += (callTheta * callOI + putTheta * putOI) * 100
+            let totalOI = callOI + putOI
+
+            gammaFlow += gamma * totalOI * dS
+            charmFlow += (callTheta * callOI + putTheta * putOI)
 
         })
 
-        let dS = spotSeries[i] - spotSeries[i - 1]
-
-        let gammaFlow = gammaTotal * dS
-
-        let charmFlow = charmTotal
-
-        let flow = gammaFlow + charmFlow
-
-        dealerFlow.push(flow)
-
+        dealerFlow.push(gammaFlow + charmFlow)
     }
 
     return dealerFlow
@@ -439,34 +464,54 @@ function computeDealerFlow(chainHistory, spotSeries) {
 
     let flow = []
 
-    for (let i = 1; i < chainHistory.length; i++) {
+    for (let t = 1; t < chainHistory.length; t++) {
 
-        let chain = chainHistory[i]
+        let chainNow = chainHistory[t]
+        let chainPrev = chainHistory[t - 1]
 
-        let gammaTotal = 0
-        let charmTotal = 0
+        if (!chainNow || !chainPrev) {
+            flow.push(0)
+            continue
+        }
 
-        chain.forEach(row => {
+        // 🔥 Build previous map
+        let prevMap = {}
 
-            let gamma = Number(row.gamma) || 0
-            let callOI = Number(row.call_oi) || 0
-            let putOI = Number(row.put_oi) || 0
+        chainPrev.forEach(o => {
+            if (o && o.strike != null) {
+                prevMap[o.strike] = o
+            }
+        })
 
-            let callTheta = Number(row.call_theta) || 0
-            let putTheta = Number(row.put_theta) || 0
+        let dS = spotSeries[t] - spotSeries[t - 1]
 
-            gammaTotal += gamma * (callOI + putOI) * 100
-            charmTotal += (callTheta * callOI + putTheta * putOI) * 100
+        let gammaFlow = 0
+        let charmFlow = 0
+
+        chainNow.forEach(o => {
+
+            if (!o || o.strike == null) return
+
+            let prev = prevMap[o.strike]
+
+            // 🔥 skip if strike not present before
+            if (!prev) return
+
+            let gamma = Number(o.gamma) || 0
+            let callOI = Number(o.call_oi) || 0
+            let putOI = Number(o.put_oi) || 0
+
+            let callTheta = Number(o.call_theta) || 0
+            let putTheta = Number(o.put_theta) || 0
+
+            let totalOI = callOI + putOI
+
+            gammaFlow += gamma * totalOI * dS
+            charmFlow += (callTheta * callOI + putTheta * putOI)
 
         })
 
-        let dS = spotSeries[i] - spotSeries[i - 1]
-
-        let gammaFlow = gammaTotal * dS
-        let charmFlow = charmTotal
-
         flow.push(gammaFlow + charmFlow)
-
     }
 
     return flow
@@ -1078,9 +1123,11 @@ function renderLine(chart, x, y, title) {
 
 }
 
-function renderGamma(chain) {
+function renderGammaLadder(chain) {
+
 
     charts.gamma.clear()
+
 
     if (!chain || chain.length === 0) {
         return
@@ -1093,7 +1140,8 @@ function renderGamma(chain) {
 
     chain.forEach(c => {
 
-        sum += c.net_gex
+        let g = Number(c.net_gex) || 0
+        sum += g
         cumulative.push(sum)
 
     })
@@ -1116,7 +1164,7 @@ function renderGamma(chain) {
                 let p = params[0]
                 return `
                 Strike: <b>${p.axisValue}</b><br>
-                Cumulative GEX: <b>${p.data.toFixed(2)}</b>
+                Cumulative GEX: <b>${(Number(p.data) || 0).toFixed(2)}</b>
                 `
             }
         },
@@ -1767,7 +1815,11 @@ function renderInstabilitySurface(data) {
         ])
 
     }
+    let latestPoint = surfaceData[surfaceData.length - 1]
+    let i2Values = surfaceData.map(p => p[2])
 
+    let minI2 = Math.min(...i2Values)
+    let maxI2 = Math.max(...i2Values)
 
     charts.instability.setOption({
 
@@ -1795,35 +1847,125 @@ function renderInstabilitySurface(data) {
         },
 
         xAxis: {
-            name: "Distance from Gamma Flip", type: "value", axisLabel: {color: "#fff"}
+            name: "Distance from Gamma Flip - X axis", type: "value", axisLabel: {color: "#fff"}
         },
 
         yAxis: {
-            name: "Linear Instability (I1)", type: "value", axisLabel: {color: "#fff"}
+            name: "Linear Instability (I1) - Y axis", type: "value", axisLabel: {color: "#fff"}
         },
 
         visualMap: {
-
-            dimension: 2, min: 0, max: 0.02,
-
+            dimension: 2,
+            min: minI2,
+            max: maxI2,
+            calculable: true,
             inRange: {
                 color: ["#00ff9c", "#ffaa00", "#ff4d4d"]
             },
-
             textStyle: {color: "#fff"}
         },
 
         series: [
 
+            // 🔵 All points
             {
                 type: "scatter",
-
                 data: surfaceData,
-
                 symbolSize: function (val) {
                     return Math.abs(val[3]) * 10 + 10
+                },
+                itemStyle: {
+                    color: "#00c8ff",
+                    opacity: 0.6
                 }
+            },
 
+            // 🔴 Latest point (highlighted)
+            {
+                type: "scatter",
+                data: latestPoint ? [latestPoint] : [],
+                symbolSize: 18,
+                z: 100,
+                itemStyle: {
+                    color: "#ff3b3b"
+                },
+                label: {
+                    show: true,
+                    formatter: "Latest",
+                    color: "#fff",
+                    position: "top"
+                }
+            }
+
+        ],
+        graphic: [
+
+            // top-right
+            {
+                type: "text",
+                left: "75%",
+                top: "15%",
+                style: {
+                    text: "Stable\n(+Gamma + Low Instability)",
+                    fill: "#00ff9c",
+                    font: "12px sans-serif",
+                    textAlign: "center"
+                }
+            },
+
+            // top-left
+            {
+                type: "text",
+                left: "10%",
+                top: "15%",
+                style: {
+                    text: "Transition\n(Flip Zone)",
+                    fill: "#ffd700",
+                    font: "12px sans-serif",
+                    textAlign: "center"
+                }
+            },
+
+            // bottom-left
+            {
+                type: "text",
+                left: "10%",
+                top: "75%",
+                style: {
+                    text: "Crash Risk\n(Short Gamma)",
+                    fill: "#ff3b3b",
+                    font: "12px sans-serif",
+                    textAlign: "center"
+                }
+            },
+
+            // bottom-right
+            {
+                type: "text",
+                left: "75%",
+                top: "75%",
+                style: {
+                    text: "Mean Reversion",
+                    fill: "#00c8ff",
+                    font: "12px sans-serif",
+                    textAlign: "center"
+                }
+            },
+            {
+                type: "text",
+                left: 20,
+                top: 20,
+                style: {
+                    text:
+                        `Green = Stable
+Yellow = Transition
+Red = Convexity Risk
+
+Small bubbles = low impact
+Large bubbles = high amplification`,
+                    fill: "#ddd",
+                    font: "12px monospace"
+                }
             }
 
         ]
@@ -2145,7 +2287,7 @@ function renderOptionStructure(index) {
 
     if (!chain) return
 
-    renderGamma(chain)
+    renderGammaLadder(chain)
 
     renderVega(chain)
     renderVegaExposure(chain)
@@ -2360,15 +2502,13 @@ function renderGammaTemporal(index) {
 
     if (!chainNow || !chainPrev) return
 
+    // 🔥 Build strike map for previous chain
     let prevMap = {}
 
-    // map previous chain by strike
     chainPrev.forEach(o => {
-
-        if (!o || o.net_gex == null) return
-
-        prevMap[o.strike] = o.net_gex
-
+        if (o && o.strike != null && o.net_gex != null) {
+            prevMap[o.strike] = o.net_gex
+        }
     })
 
     let temporal = []
@@ -2376,9 +2516,13 @@ function renderGammaTemporal(index) {
 
     chainNow.forEach(o => {
 
-        if (!o || o.net_gex == null) return
+        if (!o || o.strike == null || o.net_gex == null) return
 
-        let prev = prevMap[o.strike] ?? 0
+        let prev = prevMap[o.strike]
+
+        // 🔥 STRICT MATCH (no fake zeros)
+        if (prev == null) return
+
         let delta = o.net_gex - prev
 
         temporal.push(delta)
@@ -2391,29 +2535,32 @@ function renderGammaTemporal(index) {
         backgroundColor: "#111",
 
         title: {
-            text: "Temporal GEX Gradient (Gamma-Time Compression) - Color proxy", textStyle: {color: "#fff"}
+            text: "Temporal GEX Gradient (Gamma-Time Compression) - Color Proxy",
+            textStyle: {color: "#fff"}
         },
 
-        tooltip: {
-            trigger: "axis"
-        },
+        tooltip: {trigger: "axis"},
 
         xAxis: {
-            type: "category", data: strikes, axisLabel: {color: "#fff"}
+            type: "category",
+            data: strikes,
+            axisLabel: {color: "#fff"}
         },
 
         yAxis: {
-            type: "value", axisLabel: {color: "#fff"}
+            type: "value",
+            axisLabel: {color: "#fff"}
         },
 
         series: [{
-            type: "bar", data: temporal, itemStyle: {
+            type: "bar",
+            data: temporal,
+            itemStyle: {
                 color: function (p) {
                     return p.value >= 0 ? "#00ff9c" : "#ff4d4d"
                 }
             }
         }]
-
     })
 }
 
@@ -2424,32 +2571,47 @@ function renderGammaShockSpeed(index) {
     let chainNow = chainHistory[index]
     let chainPrev = chainHistory[index - 1]
 
-    if (!chainNow || !chainPrev || chainNow.length < 3) return
+    if (!chainNow || !chainPrev) return
+
+    // 🔥 Create map for previous chain
+    let prevMap = {}
+
+    chainPrev.forEach(o => {
+        if (o && o.strike != null && o.net_gex != null) {
+            prevMap[o.strike] = o.net_gex
+        }
+    })
 
     let strikes = []
     let shock = []
 
     for (let i = 1; i < chainNow.length - 1; i++) {
 
-        let g2 = chainNow[i + 1].net_gex
-        let g1 = chainNow[i].net_gex
-        let g0 = chainNow[i - 1].net_gex
+        let curr = chainNow[i]
+        let left = chainNow[i - 1]
+        let right = chainNow[i + 1]
 
-        let gPrev = chainPrev[i].net_gex
+        if (!curr || !left || !right) continue
 
-        if (g2 == null || g1 == null || g0 == null || gPrev == null) continue
+        let g1 = curr.net_gex
+        let g0 = left.net_gex
+        let g2 = right.net_gex
 
-        // spatial convexity
+        // 🔥 SAFE previous lookup
+        let gPrev = prevMap[curr.strike]
+
+        if (
+            g1 == null || g0 == null || g2 == null ||
+            gPrev == null
+        ) continue
+
         let d2 = g2 - 2 * g1 + g0
-
-        // temporal gradient
         let dt = g1 - gPrev
 
         let shockSpeed = Math.abs(dt) * Math.abs(d2)
 
-        strikes.push(chainNow[i].strike)
+        strikes.push(curr.strike)
         shock.push(shockSpeed)
-
     }
 
     charts.gammaShock.setOption({
@@ -2457,29 +2619,94 @@ function renderGammaShockSpeed(index) {
         backgroundColor: "#111",
 
         title: {
-            text: "Gamma Shock Speed", textStyle: {color: "#fff"}
-        },
-
-        tooltip: {
-            trigger: "axis"
+            text: "Gamma Shock Speed",
+            textStyle: {color: "#fff"}
         },
 
         xAxis: {
-            type: "category", data: strikes, axisLabel: {color: "#fff"}
+            type: "category",
+            data: strikes,
+            axisLabel: {color: "#fff"}
         },
 
         yAxis: {
-            type: "value", name: "Shock Speed", axisLabel: {color: "#fff"}
+            type: "value",
+            name: "Shock Speed",
+            axisLabel: {color: "#fff"}
         },
 
         series: [{
-            type: "bar", data: shock, itemStyle: {
+            type: "bar",
+            data: shock,
+            itemStyle: {
                 color: "#ff2b2b"
             }
         }]
-
     })
 }
+// function renderGammaShockSpeed(index) {
+//
+//     if (index === 0) return
+//
+//     let chainNow = chainHistory[index]
+//     let chainPrev = chainHistory[index - 1]
+//
+//     if (!chainNow || !chainPrev || chainNow.length < 3) return
+//
+//     let strikes = []
+//     let shock = []
+//
+//     for (let i = 1; i < chainNow.length - 1; i++) {
+//
+//         let g2 = chainNow[i + 1].net_gex
+//         let g1 = chainNow[i].net_gex
+//         let g0 = chainNow[i - 1].net_gex
+//
+//         let gPrev = chainPrev[i].net_gex
+//
+//         if (g2 == null || g1 == null || g0 == null || gPrev == null) continue
+//
+//         // spatial convexity
+//         let d2 = g2 - 2 * g1 + g0
+//
+//         // temporal gradient
+//         let dt = g1 - gPrev
+//
+//         let shockSpeed = Math.abs(dt) * Math.abs(d2)
+//
+//         strikes.push(chainNow[i].strike)
+//         shock.push(shockSpeed)
+//
+//     }
+//
+//     charts.gammaShock.setOption({
+//
+//         backgroundColor: "#111",
+//
+//         title: {
+//             text: "Gamma Shock Speed", textStyle: {color: "#fff"}
+//         },
+//
+//         tooltip: {
+//             trigger: "axis"
+//         },
+//
+//         xAxis: {
+//             type: "category", data: strikes, axisLabel: {color: "#fff"}
+//         },
+//
+//         yAxis: {
+//             type: "value", name: "Shock Speed", axisLabel: {color: "#fff"}
+//         },
+//
+//         series: [{
+//             type: "bar", data: shock, itemStyle: {
+//                 color: "#ff2b2b"
+//             }
+//         }]
+//
+//     })
+// }
 
 function renderGammaVegaCoupling() {
 
@@ -3345,16 +3572,62 @@ function renderConvexityRadar(data) {
 
 
 /*---------------Snapshot Tab..................*/
+function renderSnapshotsUI() {
+
+    if (!snapshotState.all || snapshotState.all.length === 0) {
+        console.warn("No snapshots to render")
+        return
+    }
+
+    const slider = document.getElementById("snapshotSlider")
+
+    if (!slider) {
+        console.warn("Slider not ready yet")
+        return
+    }
+
+    initSnapshotSlider()
+    updateSnapshotSlider()
+    renderCurrentSnapshot()
+}
 
 function loadSnapshots(dataArray) {
 
+    if (!Array.isArray(dataArray)) {
+        console.error("Invalid snapshot data:", dataArray)
+        return
+    }
 
-    const container = document.getElementById("snapshotContainer")
+    let flat = []
 
-    renderSnapshotsList(dataArray)
+    dataArray.forEach(item => {
+
+        if (item.timestamp) {
+            flat.push(item)
+        } else if (Array.isArray(item)) {
+            flat.push(...item)
+        } else if (typeof item === "object") {
+            Object.values(item).forEach(v => {
+                if (v && v.timestamp) flat.push(v)
+            })
+        }
+    })
+
+    console.log("After flatten:", flat)
+
+    snapshotState.all = flat.map(s => ({
+        ...(s.data || {}),
+        timestamp: s.timestamp,
+        stock_id: s.stock_id || s.data?.stock_id
+    }))
+
+    snapshotState.all.sort(
+        (a, b) => new Date(Number(a.timestamp) * 1000) - new Date(Number(b.timestamp) * 1000)
+    )
+
+    console.log("Final normalized:", snapshotState.all)
 }
 
-let snapshotCache = {}
 
 async function fetchSnapshot() {
 
@@ -3404,24 +3677,12 @@ function switchTab(tabId, el) {
     // -----------------------------
     if (tabId === "snapshotsTab") {
 
-        if (!activeStock) return
+    if (!snapshotState.all.length) return
 
-        const container = document.getElementById("snapshotContainer")
-
-        // show loading state
-        container.innerHTML = `<p style="color:#888">Loading snapshots...</p>`
-
-        fetchSnapshot(activeStock)
-            .then(data => {
-
-                if (!data || data.length === 0) {
-                    container.innerHTML = `<p style="color:#888">No snapshot available</p>`
-                    return
-                }
-
-                loadSnapshots(data)
-            })
-    }
+    setTimeout(() => {
+        renderSnapshotsUI()
+    }, 0)
+}
 
     // -----------------------------
     // Resize charts (important)
@@ -3433,6 +3694,34 @@ function switchTab(tabId, el) {
             }
         })
     }, 200)
+}
+
+async function loadSnapshotsForStock(stock) {
+
+    if (!stock) return
+
+    console.log("Fetching snapshots for:", stock)
+
+    const data = await fetchSnapshot()
+
+    if (!data || data.length === 0) {
+        console.warn("No snapshots found")
+        return
+    }
+
+    loadSnapshots(data)
+
+    // 🔥 Always point to latest snapshot
+    snapshotState.currentIndex = snapshotState.all.length - 1
+
+    // 🔥 Render ONLY if snapshots tab is active
+    if (document.getElementById("snapshotsTab").classList.contains("active")) {
+
+        setTimeout(() => {
+            renderSnapshotsUI()
+        }, 0)
+
+    }
 }
 
 /* ---------- Initialization ---------- */

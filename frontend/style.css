@@ -233,6 +233,79 @@ body {
     padding: 6px;
 }
 
+.market-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #111;
+    color: #fff;
+    font-size: 13px;
+}
+
+.market-table th {
+    padding: 8px;
+    border-bottom: 1px solid #444;
+    color: #aaa;
+    text-align: center;
+}
+
+.market-table td {
+    padding: 8px;
+    border-bottom: 1px solid #222;
+    text-align: center;
+}
+
+/* 🔥 State Colors */
+.state-breakout {
+    color: #ff3b3b;
+    font-weight: bold;
+}
+
+.state-transition {
+    color: #ffaa00;
+    font-weight: bold;
+}
+
+.state-reversion {
+    color: #00ff9c;
+    font-weight: bold;
+}
+
+.state-crash {
+    color: #ff0000;
+    font-weight: bold;
+}
+.slider-container {
+    margin: 10px 0;
+    padding: 10px;
+    background: #1a1a1a;
+    border-radius: 8px;
+}
+
+#snapshotSlider {
+    width: 100%;
+}
+
+#snapshotLabel {
+    margin-top: 5px;
+    font-size: 12px;
+    color: #aaa;
+}
+
+.controls {
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+
+    background: #111;   /* important so content doesn't overlap */
+    padding: 10px 0;
+
+    border-bottom: 1px solid #222;
+}
+
+.controls {
+    box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+}
+
 .meta {
     font-size: 12px;
     color: #888;

@@ -443,14 +443,25 @@ def get_latest_snapshot(stock_id):
         if not data:
             return jsonify({"error": "No data found"}), 404
 
-        # ✅ data = { timestamp: snapshot }
-        latest_ts = sorted(data.keys())[-1]
-        latest_snapshot = data[latest_ts]
+        # ✅ Sort timestamps
+        sorted_ts = sorted(data.keys())
+
+        # ✅ Take last 20
+        last_20_ts = sorted_ts[-20:]
+
+        # ✅ Build ordered snapshot list
+        snapshots = [
+            {
+                "timestamp": ts,
+                "data": data[ts]
+            }
+            for ts in last_20_ts
+        ]
 
         return jsonify({
             "stock_id": stock_id,
-            "timestamp": latest_ts,
-            "data": latest_snapshot   # ✅ SINGLE object
+            "count": len(snapshots),
+            "data": snapshots   # ✅ LIST instead of single object
         })
 
     except Exception as e:

@@ -12,8 +12,6 @@
     <script src="auth.js"></script>
 
 
-
-
     <link rel="stylesheet" href="style.css">
 
 
@@ -160,21 +158,19 @@
 
             document.addEventListener("DOMContentLoaded", function () {
 
-    document.querySelectorAll(".tab").forEach(tab => {
+                document.querySelectorAll(".tab").forEach(tab => {
 
-        tab.addEventListener("click", function () {
+                    tab.addEventListener("click", function () {
 
-            console.log("TAB CLICK:", this.dataset.tab)
+                        console.log("TAB CLICK:", this.dataset.tab)
 
-            switchTab(this.dataset.tab, this)
+                        switchTab(this.dataset.tab, this)
 
-        })
+                    })
 
-    })
+                })
 
-})
-
-
+            })
 
 
         </script>
@@ -419,13 +415,87 @@
     <div id="snapshotsTab" class="tab-content">
 
         <h3 style="color:white">Snapshots</h3>
+         <!-- 🔥 STICKY CONTROLS -->
+    <div class="controls">
+
+
+         <div class="slider-container">
+                <input
+                        type="range"
+                        id="snapshotSlider"
+                        min="0"
+                        max="0"
+                        value="0"
+                        step="1"
+                />
+                <div id="snapshotLabel">Latest</div>
+            </div>
+         </div>
 
         <p style="color:#aaa">
             Volatility Regime Snapshot
         </p>
 
         <div id="snapshotContainer" class="grid">
+
             <!-- Future snapshot charts go here -->
+        </div>
+        <div id="instabilityPocketsTable"></div>
+        <div id="convexityTrapsTable"></div>
+        <h3 style="color:white; text-align:center;">Option Chain Surface Analysis</h3>
+
+        <div class="snapshot-section">
+            <h3 style="color:#fff; text-align:center;">IV Skew (Multi Expiry)</h3>
+            <div id="snapshotIvSkewChart" style="width:100%; height:420px;"></div>
+            <h3 style="color:#fff; text-align:center;">Net GEX (Multi Expiry)</h3>
+            <div id="snapshotGEXChart" style="width:100%; height:420px;"></div>
+            <div class="market-state-guide">
+
+                <h3 style="color:#fff; text-align:center; margin-bottom:10px;">
+                    Market State Guide
+                </h3>
+
+                <table class="market-table">
+
+                    <thead>
+                    <tr>
+                        <th>Market State</th>
+                        <th>Meaning</th>
+                        <th>Trading Behavior</th>
+                    </tr>
+                    </thead>
+
+                    <tbody>
+
+                    <tr>
+                        <td class="state-breakout">HIGH RISK BREAKOUT</td>
+                        <td>Panic + Short Gamma</td>
+                        <td>Trend expansion</td>
+                    </tr>
+
+                    <tr>
+                        <td class="state-transition">VOLATILE TRANSITION</td>
+                        <td>Regime shift</td>
+                        <td>Unstable, watch carefully</td>
+                    </tr>
+
+                    <tr>
+                        <td class="state-reversion">MEAN REVERSION</td>
+                        <td>Stable + Long Gamma</td>
+                        <td>Range bound</td>
+                    </tr>
+
+                    <tr>
+                        <td class="state-crash">CRASH RISK</td>
+                        <td>Short Gamma below flip</td>
+                        <td>Downside acceleration</td>
+                    </tr>
+
+                    </tbody>
+
+                </table>
+            </div>
+            <div id="regimeStateTable"></div>
         </div>
 
     </div>
@@ -462,7 +532,7 @@
     </footer>
 </div>
 <script src="dashboard.js"></script>
-    <script src="snapshotRenderer.js"></script>
+<script src="snapshotRenderer.js"></script>
 </body>
 
 </html>
