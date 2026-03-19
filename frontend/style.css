@@ -36,8 +36,13 @@ body {
     font-weight: bold;
 
     margin-bottom: 15px;
+    position: sticky;
+    top: 0;
+    z-index: 1000; /* ensures it stays above other elements */
+
 
 }
+
 
 .banner-item {
 

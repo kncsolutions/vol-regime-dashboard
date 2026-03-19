@@ -721,7 +721,32 @@ function renderCharmExposure(chain) {
                     return params.value > 0 ? "#00FF9C" : "#FF4D4F"
                 }
             }
-        }]
+        }],
+        graphic: [
+            // 🔵 Title Guide
+            {
+                type: "text",
+                left: "15%",
+                top: "10%",
+                z: 100,
+                style: {
+                    text:
+                        `charm = d(delta)/d(time)
+Negative charm exposure
+-delta decreases over time
+-dealers sell underlying
+
+Positive charm exposure
+-delta increases
+-dealers buy underlying`,
+                    fill: "#e4de09",
+                    font: "12px monospace",
+                    opacity: 0.5,
+                    lineHeight: 18
+                }
+            }
+
+        ]
 
     })
 
@@ -941,7 +966,40 @@ function renderVommaWall(chain) {
                 color: "#00E5FF"
             }
 
-        }]
+        }],
+        graphic: [
+            // 🔵 Title Guide
+            {
+                type: "text",
+                left: "15%",
+                top: "5%",
+                z: 100,
+                style: {
+                    text:
+                        `vomma = d2(option-price)/d2(IV)
+Vomma Exposure = summation (Vomma x OI x contract size)
+Positive Vomma Exposure:
+Vega increases when IV rises and Vega decreases when IV falls.
+Implication:Volatility moves become self-reinforcing.
+If IV starts rising -> dealers become more sensitive ->can amplify vol spikes
+Negative Vomma Exposure:
+Vega decreases when IV rises and Vega increases when IV falls
+Implication: Volatility moves become self-dampening.
+System resists large IV moves.
+Interpreting the MAGNITUDE
+-Small Vomma Exposure
+Vega is stable.IV changes don’t alter dealer behavior much
+Calm / predictable vol regime
+-Large Vomma Exposure
+Vega is unstable. Small IV changes -> big changes in hedging flows`,
+                    fill: "#ddd",
+                    font: "12px monospace",
+                    opacity: 0.5,
+                    lineHeight: 18
+                }
+            }
+
+        ]
 
     })
 
@@ -1112,6 +1170,7 @@ function renderLine(chart, x, y, title) {
             scale: true,
             boundaryGap: ['5%', '5%']
         },
+        tooltip: {trigger: "axis"},
 
         series: [{
             data: y, type: "line", smooth: true,
@@ -1300,7 +1359,38 @@ function renderVegaExposure(chain) {
                 width: 2, color: "#00c8ff"
             }
 
-        }]
+        }],
+        graphic: [
+            // 🔵 Title Guide
+            {
+                type: "text",
+                left: "15%",
+                top: "5%",
+                z: 100,
+                style: {
+                    text:
+                        `-Positive Cumulative VEX
+Market is long volatility
+Typically:
+Dealers are long vega.Customers are short vol (selling options)
+Interpretation: If IV up => dealers gain and If IV down => dealers lose
+Behavioral impact: Dealers are comfortable with rising vol. They don’t need to hedge aggressively
+Result: Volatility can expand smoothly. Trends can sustain
+-Negative Cumulative VEX
+Market is short volatility
+Typically: Dealers are short vega. Customers are long options
+Interpretation: If IV up => dealers lose and If IV down => dealers gain
+Behavioral impact: Dealers are forced to hedge volatility moves
+Rising IV creates feedback loops
+Result:Vol spikes accelerate. Market becomes fragile / explosive`,
+                    fill: "#ddd",
+                    font: "12px monospace",
+                    opacity: 0.5,
+                    lineHeight: 18
+                }
+            }
+
+        ]
 
     })
 
@@ -1486,6 +1576,7 @@ function renderOI(chain) {
         legend: {
             data: ["Call", "Put"]
         },
+        tooltip: {trigger: "axis"},
 
         xAxis: {
             type: "category", data: strikes
@@ -2429,6 +2520,7 @@ function renderGammaSpatialGradient(index) {
         xAxis: {
             type: "category", data: strikes.slice(1, -1), axisLabel: {color: "#fff"}
         },
+        tooltip: {trigger: "axis"},
 
         yAxis: {
             type: "value", axisLabel: {color: "#fff"}
@@ -2485,6 +2577,7 @@ function renderGammaConvexity(index) {
         yAxis: {
             type: "value", axisLabel: {color: "#fff"}
         },
+        tooltip: {trigger: "axis"},
 
         series: [{
             type: "bar", data: convexity
@@ -2634,6 +2727,7 @@ function renderGammaShockSpeed(index) {
             name: "Shock Speed",
             axisLabel: {color: "#fff"}
         },
+        tooltip: {trigger: "axis"},
 
         series: [{
             type: "bar",
@@ -3144,7 +3238,36 @@ function renderVanna(chain) {
                 }
             }
 
-        }]
+        }],
+        graphic: [
+            // 🔵 Title Guide
+            {
+                type: "text",
+                left: "15%",
+                top: "10%",
+                z: 100,
+                style: {
+                    text:
+                        `--vanna = d(delta)/d(iv)
+--Positive Vanna Exposure (VEX > 0)
+When IV rises => delta increases
+Dealers: Become longer delta. Need to sell underlying to hedge.
+When IV falls => delta decreases. Dealers need to buy underlying
+Result:Vol up => market gets selling pressure and Vol down => market gets buying support
+->This is mean-reverting / stabilizing
+--Negative Vanna Exposure (VEX < 0)
+When IV rises => delta decreases. Dealers:Become short delta. Need to buy underlying.
+When IV falls => delta increases.Dealers need to sell underlying
+Result:Vol up => market gets buying (squeeze) and Vol down => market gets selling
+->This is trend-amplifying / destabilizing`,
+                    fill: "#e4de09",
+                    font: "12px monospace",
+                    opacity: 0.5,
+                    lineHeight: 18
+                }
+            }
+
+        ]
 
     })
 
