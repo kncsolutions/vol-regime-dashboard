@@ -23,7 +23,7 @@ async function initFirebase() {
 
 function startAuthListener() {
 
-    auth.onAuthStateChanged(async (user) => {
+    auth.onIdTokenChanged(async (user) => {
 
         if (user) {
 
@@ -36,6 +36,8 @@ function startAuthListener() {
 
             const token = await user.getIdToken()
             window.FIREBASE_TOKEN = token
+
+            console.log("🔄 Token updated")
 
 
             // redirect login page → dashboard
@@ -66,6 +68,24 @@ function startAuthListener() {
     })
 
 
+}
+
+async function getFreshToken() {
+
+    const user = auth.currentUser
+    if (!user) return null
+
+    try {
+        const token = await user.getIdToken()
+        window.FIREBASE_TOKEN = token
+        return token
+    } catch (e) {
+        console.warn("Token fetch failed, forcing refresh")
+
+        const token = await user.getIdToken(true)
+        window.FIREBASE_TOKEN = token
+        return token
+    }
 }
 
 // LOGIN

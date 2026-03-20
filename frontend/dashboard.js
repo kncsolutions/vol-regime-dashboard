@@ -118,10 +118,20 @@ async function loadStocks() {
     // auto load first stock
     if (stocks.length > 0) {
 
-        document.getElementById("stockSelect").value = stocks[0]
+        const select = document.getElementById("stockSelect")
 
-        loadStock(stocks[0])
+        // 🧠 Restore previous selection OR fallback
+        let selected = activeStock || localStorage.getItem("selectedStock") || stocks[0]
 
+        // If selected stock not in new list → fallback safely
+        if (!stocks.includes(selected)) {
+            selected = stocks[0]
+        }
+
+        activeStock = selected
+        select.value = selected
+
+        loadStock(selected)
     }
 
 }
@@ -145,167 +155,177 @@ function ensureNetGEX(chain) {
 
 }
 
+let currentRequestId = 0
+let isLoading = false
+
 async function loadStock(symbol) {
 
+    if (!symbol) return
+
+    // 🔒 prevent duplicate calls
+    if (isLoading && symbol === activeStock) return
+
+    const requestId = ++currentRequestId
+    isLoading = true
+    activeStock = symbol
+
+    console.log("📡 Loading:", symbol)
 
     try {
-        activeStock = symbol
-        console.log(symbol)
 
-        let res = await authFetch(`${API}/dashboard/${symbol}?db=${database}`)
-        let data = await res.json()
+        const res = await authFetch(`${API}/dashboard/${symbol}?db=${database}`)
+        const data = await res.json()
 
-        if (!data || !data.time) {
-            console.warn("No data returned for", symbol)
+        // ❌ Ignore stale responses
+        if (requestId !== currentRequestId) return
+
+        if (!data || !Array.isArray(data.time)) {
+            console.warn("No valid data for", symbol)
             return
         }
-        // console.log("Step 1")
+
+        // -------------------------
+        // 📊 BASIC SERIES
+        // -------------------------
+        spotSeries = data.spot || []
+        flipSeries = data.gamma_flip || []
+
         renderMarketBanner(data)
-        // console.log("Step 2")
-        renderLine(charts.spot, data.time, data.spot, "Spot")
-        renderLine(charts.iv, data.time, data.iv, "IV")
-        renderLine(charts.hv, data.time, data.hv, "HV")
 
-        spotSeries = data.spot
-        flipSeries = data.gamma_flip
+        renderLine(charts.spot, data.time, spotSeries, "Spot")
+        renderLine(charts.iv, data.time, data.iv || [], "IV")
+        renderLine(charts.hv, data.time, data.hv || [], "HV")
 
-        renderLine(charts.flip, data.time, data.gamma_flip, "Gamma Flip")
-        renderLine(charts.k, data.time, data.k, "Impact k")
-        renderLine(charts.bpr, data.time, data.bpr, "BPR")
+        renderLine(charts.flip, data.time, flipSeries, "Gamma Flip")
+        renderLine(charts.k, data.time, data.k || [], "Impact k")
+        renderLine(charts.bpr, data.time, data.bpr || [], "BPR")
 
-        renderLine(charts.i1, data.time, data.I1, "I1")
-        renderLine(charts.i2, data.time, data.I2, "I2")
-        renderLine(charts.amp, data.time, data.amplification, "Amplification")
+        renderLine(charts.i1, data.time, data.I1 || [], "I1")
+        renderLine(charts.i2, data.time, data.I2 || [], "I2")
+        renderLine(charts.amp, data.time, data.amplification || [], "Amplification")
 
-        renderLine(charts.frag, data.time, data.fragility, "Fragility")
-        // console.log("Calling renderGamma...", data.option_chain)
+        renderLine(charts.frag, data.time, data.fragility || [], "Fragility")
+
+        // -------------------------
+        // 🧱 OPTION CHAIN
+        // -------------------------
+        let chain = Array.isArray(data.option_chain) ? data.option_chain : []
+
+        ensureNetGEX(chain)
+        sortChainByStrike(chain)
+
         try {
-
-            renderGammaLadder(data.option_chain)
+            renderGammaLadder(chain)
         } catch (err) {
-
-            console.error("🔥 loadStock crashed BEFORE renderGamma:", err)
-
+            console.error("Gamma ladder error:", err)
         }
-        // console.log("🔥 AFTER renderGamma CALL")
 
-        renderOI(data.option_chain)
-        renderOIChange(data.option_chain)
-        renderGammaExposure(data.option_chain)
-        renderDealerHeatmap(data.option_chain)
-        renderGammaWallMap(data.option_chain)
-        renderHedgingPressure(data.option_chain)
-        ivHistory = data.option_chain_history
-        ivTimes = data.time
+        renderOI(chain)
+        renderOIChange(chain)
+        renderGammaExposure(chain)
+        renderDealerHeatmap(chain)
+        renderGammaWallMap(chain)
+        renderHedgingPressure(chain)
 
-        chainHistory = data.option_chain_history || []
+        // -------------------------
+        // 📚 HISTORY
+        // -------------------------
+        ivHistory = data.option_chain_history || []
+        ivTimes = data.time || []
 
-        for (let i = 0; i < chainHistory.length; i++) {
+        chainHistory = ivHistory.map((c, i) => {
 
-            if (!Array.isArray(chainHistory[i])) {
-
-                if (i > 0 && Array.isArray(chainHistory[i - 1])) {
-                    chainHistory[i] = JSON.parse(JSON.stringify(chainHistory[i - 1]))
-                    chainHistory[i].time = data.time[i - 1]
-                } else {
-                    chainHistory[i] = JSON.parse(JSON.stringify(data.option_chain))
-                    chainHistory[i].time = data.time[i]
-                }
-
+            if (!Array.isArray(c)) {
+                return JSON.parse(JSON.stringify(chain))
             }
 
+            ensureNetGEX(c)
+            sortChainByStrike(c)
 
-            ensureNetGEX(chainHistory[i])
-            sortChainByStrike(chainHistory[i])
+            return c
+        })
 
+        // -------------------------
+        // 🎚️ SLIDERS
+        // -------------------------
+        const lastIndex = Math.max(ivHistory.length - 1, 0)
+
+        const chainSlider = document.getElementById("chainSlider")
+        if (chainSlider) {
+            chainSlider.max = lastIndex
+            chainSlider.value = lastIndex
         }
 
-// also fix current chain
-        ensureNetGEX(data.option_chain)
-        sortChainByStrike(data.option_chain)
+        const ivSlider = document.getElementById("ivSlider")
+        if (ivSlider) {
+            ivSlider.max = lastIndex
+            ivSlider.value = lastIndex
+        }
 
-// also fix current chain
-// ensureNetGEX(data.option_chain)
-//         console.log(chainHistory[0].map(x => x.strike))
+        // -------------------------
+        // 📈 DERIVED VISUALS
+        // -------------------------
+        renderOptionStructure(lastIndex)
+        renderGammaSpatialGradient(lastIndex)
+        renderGammaConvexity(lastIndex)
+        renderGammaTemporal(lastIndex)
+        renderGammaShockSpeed(lastIndex)
 
-        spotSeries = data.spot
-        flipSeries = data.gamma_flip
-        let lotsize = (data.lot_size !== undefined && data.lot_size !== null) ? data.lot_size : 100
-
-        // initialize chain slider
-        let chainSlider = document.getElementById("chainSlider")
-
-        chainSlider.max = ivHistory.length - 1
-        chainSlider.value = ivHistory.length - 1
-
-        renderOptionStructure(ivHistory.length - 1)
-        renderGammaSpatialGradient(ivHistory.length - 1)
-        renderGammaConvexity(ivHistory.length - 1)
-        renderGammaTemporal(ivHistory.length - 1)
         renderVolatilityHedgingPressure()
         renderVolatilityHedgingRequirement()
-        renderGammaShockSpeed(ivHistory.length - 1)
+
         renderGammaVegaCoupling()
         renderGammaVegaPhaseDiagram()
+
         renderDealerFlow()
         renderVannaFlow()
         renderGammaVannaSurface()
         renderDealerConvexitySurface()
-        let chain = data.option_chain
 
+        renderInstabilitySurface(data)
+        renderIVSkew(lastIndex, spotSeries, flipSeries, chain)
 
-        computeCharmExposure(chain, lotsize)
+        // -------------------------
+        // 🧠 ADVANCED GREEKS
+        // -------------------------
+        const lotSize = data.lot_size ?? 100
 
+        computeCharmExposure(chain, lotSize)
         renderCharmExposure(chain)
         renderCharmWall(chain)
 
-        // chainHistory = data.option_chain_history
-        let charmFlowSeries = computeCharmFlow(chainHistory)
-        // console.log("Charm Flow Input", charmFlowSeries)
+        const charmFlow = computeCharmFlow(chainHistory)
+        renderCharmFlow(data.time, charmFlow)
 
-        renderCharmFlow(data.time, charmFlowSeries)
+        const dealerFlow = computeCharmDrift(chainHistory, spotSeries)
+        renderCharmDrift(data.time, dealerFlow)
 
-        let dealerFlowSeries = computeCharmDrift(chainHistory, spotSeries)
-
-        renderCharmDrift(data.time, dealerFlowSeries)
-
-        let phaseData = computePhaseDiagram(chainHistory, spotSeries, flipSeries)
-
+        const phaseData = computePhaseDiagram(chainHistory, spotSeries, flipSeries)
         renderDealerPhaseDiagram(phaseData)
 
         computeVommaExposure(chain)
-
         renderVommaWall(chain)
-        // console.log('chain:'+JSON.stringify(data.option_chain))
-        // let chain = data.option_chain
 
-        computeVannaExposure(chain, data.spot[data.spot.length - 1], lotsize)
+        computeVannaExposure(chain, spotSeries.at(-1), lotSize)
+        renderGreekTensorMap(chain, lotSize)
 
-        renderGreekTensorMap(data.option_chain, lotsize)
-
-        let slider = document.getElementById("ivSlider")
-
-        slider.max = ivHistory.length - 1
-        slider.value = ivHistory.length - 1
-
-        renderIVSkew(ivHistory.length - 1, data.spot, data.gamma_flip, data.option_chain)
-        renderInstabilitySurface(data)
-
+        // -------------------------
+        // 🌐 EXTRA DATA (ASYNC)
+        // -------------------------
         loadGammaExplosionRanking()
         renderFlipZoneChart()
         loadConvexityRadar()
 
-        // 🔥 LOAD SNAPSHOTS IN BACKGROUND
+        // 🔥 snapshots (non-blocking)
         loadSnapshotsForStock(symbol)
-
 
     } catch (err) {
 
-        console.error("Error loading stock:", err)
+        console.error("🔥 loadStock error:", err)
 
+    } finally {
+        isLoading = false
     }
-
-
 }
 
 function computeVannaExposure(chain, spot, lotSize = 1) {
@@ -2738,6 +2758,7 @@ function renderGammaShockSpeed(index) {
         }]
     })
 }
+
 // function renderGammaShockSpeed(index) {
 //
 //     if (index === 0) return
@@ -3800,12 +3821,12 @@ function switchTab(tabId, el) {
     // -----------------------------
     if (tabId === "snapshotsTab") {
 
-    if (!snapshotState.all.length) return
+        if (!snapshotState.all.length) return
 
-    setTimeout(() => {
-        renderSnapshotsUI()
-    }, 0)
-}
+        setTimeout(() => {
+            renderSnapshotsUI()
+        }, 0)
+    }
 
     // -----------------------------
     // Resize charts (important)
@@ -3870,10 +3891,11 @@ function initDashboard() {
 async function authFetch(url) {
 
     // console.log('token:'+window.FIREBASE_TOKEN);
+    const token = await getFreshToken()
 
     return fetch(url, {
         headers: {
-            "Authorization": "Bearer " + window.FIREBASE_TOKEN
+            Authorization: `Bearer ${token}`
         }
     })
 
@@ -3885,7 +3907,15 @@ document.addEventListener("DOMContentLoaded", function () {
 
     if (stockSelect) {
         stockSelect.addEventListener("change", function () {
-            if (this.value) loadStock(this.value)
+
+            if (!this.value) return
+
+            activeStock = this.value
+
+            // 💾 persist across reloads
+            localStorage.setItem("selectedStock", activeStock)
+
+            loadStock(activeStock)
         })
     }
 
@@ -3929,12 +3959,28 @@ document.addEventListener("DOMContentLoaded", function () {
 
             database = this.value
 
+            // reload stock list BUT preserve selection
             loadStocks()
-            renderInstabilityMap()
 
+            // refresh current stock ONLY (no override)
+            if (activeStock) {
+                loadStock(activeStock)
+            }
+
+            renderInstabilityMap()
         })
     }
 
 })
+
+setInterval(async () => {
+
+    const user = auth.currentUser
+    if (!user) return
+
+    await user.getIdToken(true)
+    console.log("♻️ Background token refresh")
+
+}, 30 * 60 * 1000) // every 50 min
 
 window.switchTab = switchTab

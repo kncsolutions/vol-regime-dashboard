@@ -28,24 +28,45 @@
         <button id="logoutBtn" onclick="logout()">Logout</button>
 
     </div>
-    <div id="marketBanner" class="market-banner"></div>
-    <div style="margin:10px 0">
+    <div style="
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    background: #111;
+">
 
-        <label style="color:white">Database:</label>
+        <!-- Market Banner -->
+        <div id="marketBanner" class="market-banner" style="padding:8px 15px;"></div>
 
-        <select id="dbSelect">
-            <option value="cleaned">Cleaned Metrics</option>
-            <option value="raw">Raw Metrics</option>
-        </select>
+        <!-- Control Bar -->
+        <div style="
+        display:flex;
+        align-items:center;
+        gap:20px;
+        padding:10px 15px;
+        border-top: 1px solid #222;
+    ">
 
-    </div>
-    <div class="stock-selector">
+            <!-- Database Selector -->
+            <div style="display:flex; align-items:center; gap:8px;">
+                <label style="color:white">Database:</label>
 
-        <label>Select Stock:</label>
+                <select id="dbSelect">
+                    <option value="cleaned">Cleaned Metrics</option>
+                    <option value="raw">Raw Metrics</option>
+                </select>
+            </div>
 
-        <input list="stockList" id="stockSelect" placeholder="Type or select stock..."/>
+            <!-- Stock Selector -->
+            <div style="display:flex; align-items:center; gap:8px;">
+                <label style="color:white">Select Stock:</label>
 
-        <datalist id="stockList"></datalist>
+                <input list="stockList" id="stockSelect" placeholder="Type or select stock..."/>
+
+                <datalist id="stockList"></datalist>
+            </div>
+
+        </div>
 
     </div>
     <div class="tab-bar">
@@ -415,11 +436,11 @@
     <div id="snapshotsTab" class="tab-content">
 
         <h3 style="color:white">Snapshots</h3>
-         <!-- 🔥 STICKY CONTROLS -->
-    <div class="controls">
+        <!-- 🔥 STICKY CONTROLS -->
+        <div class="controls">
 
 
-         <div class="slider-container">
+            <div class="slider-container">
                 <input
                         type="range"
                         id="snapshotSlider"
@@ -430,7 +451,7 @@
                 />
                 <div id="snapshotLabel">Latest</div>
             </div>
-         </div>
+        </div>
 
         <p style="color:#aaa">
             Volatility Regime Snapshot
