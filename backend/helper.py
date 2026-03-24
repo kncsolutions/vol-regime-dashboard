@@ -7,12 +7,12 @@ from collections import defaultdict
 # Firebase initialization
 # --------------------------------
 
-cred = credentials.Certificate("breeze-credentials-firebase-adminsdk-u0aro-a51f03c53f.json")
+cred = credentials.Certificate("dhelm-vol-regime-db-firebase-adminsdk-fbsvc-90b75e3a22.json")
 
 firebase_admin.initialize_app(
     cred,
     {
-        "databaseURL": "https://breeze-credentials-default-rtdb.firebaseio.com/"
+        "databaseURL": "https://dhelm-vol-regime-db-default-rtdb.firebaseio.com/"
     }
 )
 

@@ -5,6 +5,7 @@ from firebase_admin import credentials, db, auth
 import pandas as pd
 from flask_cors import CORS
 import numpy as np
+import requests
 import os
 
 ALLOWED_USERS = [
@@ -12,11 +13,12 @@ ALLOWED_USERS = [
     "kncsolns@gmail.com"
 ]
 
-cred = credentials.Certificate("breeze-credentials-firebase-adminsdk-u0aro-a51f03c53f.json")
+cred = credentials.Certificate("dhelm-vol-regime-db-firebase-adminsdk-fbsvc-90b75e3a22.json")
+FIREBASE_DB_URL = 'https://dhelm-vol-regime-db-default-rtdb.firebaseio.com/'
 
 firebase_admin.initialize_app(
     cred,
-    {"databaseURL": 'https://breeze-credentials-default-rtdb.firebaseio.com/'}
+    {"databaseURL": 'https://dhelm-vol-regime-db-default-rtdb.firebaseio.com/'}
 )
 
 auth_app = firebase_admin.initialize_app(
@@ -64,157 +66,97 @@ def home():
 
 @app.route("/api/stocks")
 def stocks():
-    user = verify_token()
-    root_ref = get_root()
-    data = root_ref.get()
+    verify_token()
+    data = db.reference().child("stocks-list").get()
+    print("DATA:", data)  # 👈 debug
 
-    if not data:
-        return jsonify([])
+    return jsonify(list(data.keys()) if data else [])
 
-    return jsonify(list(data.keys()))
+
+
 
 
 @app.route("/api/instability-map")
 def instability_map():
-    user = verify_token()
-    root_ref = get_root()
-    data = root_ref.get()
+    verify_token()
 
-    results = []
+    try:
+        data = db.reference("latest-vol-regime-metrics").get()
 
-    for symbol in data:
+        if not isinstance(data, dict):
+            return jsonify([])
 
-        metrics = data[symbol]["metrics"]
+        results = []
 
-        df = pd.DataFrame(metrics).T
-        df = df.sort_index()
+        for symbol, row in data.items():
 
-        row = df.iloc[-1]
+            if not isinstance(row, dict):
+                continue
 
-        spot = row.get("spot")
-        gamma_zones = row.get("gamma_zones", {})
+            spot = row.get("spot")
+            flip = row.get("gamma_zones", {}).get("gamma_flip")
 
-        flip = gamma_zones.get("gamma_flip")
-
-        I1 = row.get("linear_instability_I1")
-        I2 = row.get("convexity_instability_I2")
-
-        amp = row.get("amplification_factor")
-
-        if spot and flip:
-            distance = (spot - flip) / flip * 100
+            if not spot or not flip or flip == 0:
+                continue
 
             results.append({
-
                 "symbol": symbol,
-                "distance": distance,
-                "I1": I1,
-                "I2": I2,
-                "amp": amp
-
+                "distance": (spot - flip) / flip * 100,
+                "I1": row.get("linear_instability_I1"),
+                "I2": row.get("convexity_instability_I2"),
+                "amp": row.get("amplification_factor")
             })
 
-    return jsonify(results)
+        return jsonify(results)
+
+    except Exception as e:
+        print("ERROR in /api/instability-map:", e)
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/flipzone")
 def flipzone():
     user = verify_token()
-    root_ref = get_root()
-    data = root_ref.get()
+    data = db.reference("flipzone-latest").get()
 
-    results = []
+    if not data:
+        return jsonify([])
 
-    for symbol in data:
-
-        metrics = data[symbol]["metrics"]
-
-        df = pd.DataFrame(metrics).T
-        df = df.sort_index()
-
-        row = df.iloc[-1]
-
-        spot = row.get("spot")
-        gamma_zones = row.get("gamma_zones", {})
-
-        flip = gamma_zones.get("gamma_flip")
-
-        if spot and flip:
-
-            distance = (spot - flip) / flip * 100
-
-            if abs(distance) <= 2:
-                results.append({
-
-                    "symbol": symbol,
-                    "distance": distance
-
-                })
-
-    return jsonify(results)
+    return jsonify([
+        {
+            "symbol": symbol,
+            "distance": value.get("distance")
+        }
+        for symbol, value in data.items()
+    ])
 
 
 @app.route("/api/gamma-explosion")
 def gamma_explosion():
     user = verify_token()
-    root_ref = get_root()
-    data = root_ref.get()
+    # root_ref = get_root()
+
+    flipzone = db.reference().child("flipzone-latest").get()
+
+    if not flipzone:
+        return jsonify([])
 
     results = []
 
-    for symbol in data:
+    for symbol, row in flipzone.items():
 
-        symbol_data = data.get(symbol, {})
-        metrics = symbol_data.get("metrics")
+        explosion_score = row.get("gamma_explosion_score")
+        distance = row.get("distance")
 
-        if not metrics:
+        if explosion_score is None:
             continue
-
-        df = pd.DataFrame(metrics).T
-        df = df.sort_index()
-
-        row = df.iloc[-1]
-
-        spot = row.get("spot")
-        gamma_zones = row.get("gamma_zones", {})
-        flip = gamma_zones.get("gamma_flip")
-
-        chain = row.get("option_chain")
-
-        if not spot or not flip or not chain:
-            continue
-
-        # distance from flip
-        distance = (spot - flip) / flip * 100
-
-        # keep only ±2%
-        if abs(distance) > 2:
-            continue
-
-        strikes = []
-        gex = []
-
-        for r in chain:
-            if r.get("net_gex") is not None:
-                strikes.append(r["strike"])
-                gex.append(r["net_gex"])
-
-        if len(gex) < 3:
-            continue
-
-        gradient = np.gradient(gex)
-
-        explosion_score = float(np.max(gradient ** 2))
 
         results.append({
-
             "symbol": symbol,
             "distance": distance,
-            "gamma_explosion_score": explosion_score
-
+            "gamma_explosion_score": float(explosion_score)
         })
 
-    # sort by explosion score
     results = sorted(
         results,
         key=lambda x: x["gamma_explosion_score"],
@@ -227,21 +169,17 @@ def gamma_explosion():
 @app.route("/api/convexity-radar")
 def convexity_radar():
     user = verify_token()
-    root_ref = get_root()
-    data = root_ref.get()
+    # 🔥 direct latest snapshot
+    data = db.reference().child("latest-vol-regime-metrics").get()
+
+    if not data:
+        return jsonify([])
 
     results = []
 
-    for symbol in data:
+    for symbol, row in data.items():
 
         try:
-
-            metrics = data[symbol]["metrics"]
-
-            df = pd.DataFrame(metrics).T
-            df = df.sort_index()
-
-            row = df.iloc[-1]
 
             spot = row.get("spot")
             gamma_zones = row.get("gamma_zones", {})
@@ -256,7 +194,11 @@ def convexity_radar():
             vanna_pressure = 0
             dealer_flow = 0
 
-            gex = [o["net_gex"] for o in chain if o.get("net_gex")]
+            # extract gex safely
+            gex = [o["net_gex"] for o in chain if o.get("net_gex") is not None]
+
+            if len(gex) < 3:
+                continue
 
             # ---- Gamma Instability (2nd derivative) ----
             for i in range(1, len(gex) - 1):
@@ -266,17 +208,15 @@ def convexity_radar():
 
             # ---- Vanna Pressure ----
             for o in chain:
-                net_oi = (
-                        (o.get("call_oi", 0)) -
-                        (o.get("put_oi", 0))
-                )
+                call_oi = o.get("call_oi", 0)
+                put_oi = o.get("put_oi", 0)
+
+                net_oi = call_oi - put_oi
 
                 delta = abs(o.get("call_delta", 0))
-
                 vanna = (o.get("vega", 0)) * (1 - delta)
 
                 vanna_pressure += abs(vanna * net_oi)
-
                 dealer_flow += abs(o.get("net_gex", 0))
 
             # ---- Flip Distance ----
@@ -286,23 +226,17 @@ def convexity_radar():
                 flip_distance = 1
 
             results.append({
-
                 "symbol": symbol,
 
                 "gamma_instability": min(gamma_instability / 1e9, 1),
-
                 "vanna_pressure": min(vanna_pressure / 1e8, 1),
-
                 "dealer_flow": min(dealer_flow / 1e9, 1),
-
                 "flip_distance": min(flip_distance * 5, 1),
 
                 "shock_speed": 0.5
-
             })
 
         except Exception as e:
-
             print("Radar error:", symbol, e)
 
     return jsonify(results)
@@ -361,9 +295,12 @@ def clean_option_chain(chain):
 def dashboard(symbol):
     user = verify_token()
     root_ref = get_root()
+
     ref = root_ref.child(symbol).child("metrics")
 
-    data = ref.get()
+    # 🔥 fetch only last 3 timestamps
+    data = ref.order_by_key().limit_to_last(4).get()
+
 
     if not data:
         return jsonify({})
@@ -401,28 +338,41 @@ def dashboard(symbol):
     for chain in df["option_chain"]:
         option_chain_history.append(chain)
 
+    def safe_col(df, col, default=0.0):
+        if col in df.columns:
+            return df[col].fillna(default).tolist()
+        else:
+            return [default] * len(df)
+
+    def safe_time_index(df):
+        try:
+            return [
+                t.strftime("%Y-%m-%d %H:%M:%S") if hasattr(t, "strftime") else str(t)
+                for t in df.index
+            ]
+        except Exception:
+            return [str(i) for i in range(len(df))]
+
     response = {
+        "time": safe_time_index(df),
 
-        "time": [t.strftime("%Y-%m-%d %H:%M:%S") for t in df.index],
+        "spot": safe_col(df, "spot"),
+        "iv": safe_col(df, "iv"),
+        "hv": safe_col(df, "hv"),
 
-        "spot": df["spot"].tolist(),
-        "iv": df["iv"].tolist(),
-        "hv": df["hv"].tolist(),
+        "gamma_flip": safe_col(df, "gamma_flip"),
 
-        "gamma_flip": df["gamma_flip"].tolist(),
+        "k": safe_col(df, "impact_coefficient_k"),
+        "bpr": safe_col(df, "bifurcation_proximity_ratio"),
 
-        "k": df["impact_coefficient_k"].tolist(),
-        "bpr": df["bifurcation_proximity_ratio"].tolist(),
+        "I1": safe_col(df, "linear_instability_I1"),
+        "I2": safe_col(df, "convexity_instability_I2"),
 
-        "I1": df["linear_instability_I1"].tolist(),
-        "I2": df["convexity_instability_I2"].tolist(),
+        "amplification": safe_col(df, "amplification_factor"),
+        "fragility": safe_col(df, "fragility_score"),
 
-        "amplification": df["amplification_factor"].tolist(),
-        "fragility": df["fragility_score"].tolist(),
-
-        "option_chain": option_chain or [],
-
-        "option_chain_history": option_chain_history or []
+        "option_chain": option_chain if isinstance(option_chain, list) else [],
+        "option_chain_history": option_chain_history if isinstance(option_chain_history, list) else []
     }
     if "gex_gradient" in df.columns:
         response["gex_gradient"] = df["gex_gradient"].tolist()
@@ -438,7 +388,8 @@ def get_latest_snapshot(stock_id):
 
     try:
         ref = db.reference(f"vol-regime-states/{stock_id}/states")
-        data = ref.get()
+        # Fetch only last 5 entries
+        data = ref.order_by_key().limit_to_last(5).get()
 
         if not data:
             return jsonify({"error": "No data found"}), 404
