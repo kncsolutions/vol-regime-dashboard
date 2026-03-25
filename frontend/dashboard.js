@@ -1,6 +1,7 @@
-const API = "/api"
-// const API = "http://127.0.0.1:5000/api"
-let database = "cleaned"
+// const API = "/api"
+const API = "http://127.0.0.1:5000/api"
+let source = localStorage.getItem("source") || "mongo"
+let database = localStorage.getItem("db") || "cleaned"
 let charts = {}
 let ivHistory = []
 let ivTimes = []
@@ -97,7 +98,7 @@ function initCharts() {
 
 async function loadStocks() {
 
-    let res = await authFetch(`${API}/stocks?db=${database}`)
+    let res = await authFetch(`${API}/stocks?source=${source}&db=${database}`)
 
     let stocks = await res.json()
 
@@ -173,7 +174,7 @@ async function loadStock(symbol) {
 
     try {
 
-        const res = await authFetch(`${API}/dashboard/${symbol}?db=${database}`)
+        const res = await authFetch(`${API}/dashboard/${symbol}?source=${source}&db=${database}`)
         const data = await res.json()
 
         // ❌ Ignore stale responses
@@ -350,7 +351,7 @@ function computeVannaExposure(chain, spot, lotSize = 1) {
 
 async function loadGammaExplosionRanking() {
 
-    let res = await authFetch(`${API}/gamma-explosion?db=${database}`)
+    let res = await authFetch(`${API}/gamma-explosion?source=${source}&db=${database}`)
     let data = await res.json()
 
     renderGammaExplosionRanking(data)
@@ -359,7 +360,7 @@ async function loadGammaExplosionRanking() {
 
 async function loadConvexityRadar() {
 
-    let res = await authFetch(`${API}/convexity-radar?db=${database}`)
+    let res = await authFetch(`${API}/convexity-radar?source=${source}&db=${database}`)
 
     let data = await res.json()
 
@@ -2087,7 +2088,7 @@ Large bubbles = high amplification`,
 
 async function renderInstabilityMap() {
 
-    let res = await authFetch(`${API}/instability-map?db=${database}`)
+    let res = await authFetch(`${API}/instability-map?source=${source}&db=${database}`)
     let data = await res.json()
 
     let points = data.map(d => {
@@ -2218,8 +2219,9 @@ function renderMarketBanner(data) {
 }
 
 async function renderFlipZoneChart() {
+    console.log('flipzone chart activated')
 
-    let res = await authFetch(`${API}/flipzone?db=${database}`)
+    let res = await authFetch(`${API}/flipzone?source=${source}&db=${database}`)
 
     let data = await res.json()
 
@@ -2227,7 +2229,7 @@ async function renderFlipZoneChart() {
 
     let stocks = data.map(x => x.symbol)
 
-    let distances = data.map(x => x.distance)
+    let distances = data.map(x => x.distance_pct)
 
     charts.flipzone.setOption({
 
@@ -2426,12 +2428,21 @@ function renderGammaExplosionRanking(data) {
 
     // sort by explosion score
     data.sort((a, b) => b.gamma_explosion_score - a.gamma_explosion_score)
+    console.log('gammaexp'+data)
 
     // labels with flip distance
-    let symbols = data.map(x => `${x.symbol} (${x.distance.toFixed(2)}%)`)
+    let symbols = data.map(x => {
+    if (x.distance == null) return `${x.symbol} (NA)`
+    let pct = x.distance_pct ?? 0
+    return `${x.symbol} (${(pct * 100).toFixed(2)}%)`
+})
 
     // normalize scores (log scale to avoid huge values)
-    let scores = data.map(x => Math.log10(1 + x.gamma_explosion_score))
+   let scores = data.map(x => {
+    let val = x.gamma_explosion_score
+    if (!val || val <= 0) return 0
+    return Math.log10(1 + val)
+})
 
     charts.gammaExplosionRanking.setOption({
 
@@ -2456,15 +2467,16 @@ function renderGammaExplosionRanking(data) {
 
         tooltip: {
             trigger: "axis", formatter: function (p) {
+    let d = data[p[0].dataIndex]
 
-                let d = data[p[0].dataIndex]
+    let dist = d.distance != null ? d.distance.toFixed(2) : "NA"
 
-                return `
-        ${d.symbol}<br>
-        Flip Distance: ${d.distance.toFixed(2)}%<br>
-        Explosion Score: ${d.gamma_explosion_score.toExponential(2)}
-        `
-            }
+    return `
+    ${d.symbol}<br>
+    Flip Distance: ${dist}<br>
+    Explosion Score: ${d.gamma_explosion_score?.toExponential(2) || "NA"}
+    `
+}
         },
 
         xAxis: {
@@ -3777,7 +3789,7 @@ async function fetchSnapshot() {
 
     try {
 
-        const res = await authFetch(`${API}/latest/${activeStock}`)
+        const res = await authFetch(`${API}/latest/${activeStock}?source=${source}&dataset=${database}`)
         const json = await res.json()
         console.log("json.data =", json.data)
 
@@ -3879,13 +3891,6 @@ function initDashboard() {
 
 }
 
-// window.onload = function () {
-//
-//     initCharts()
-//     loadStocks()
-//     renderInstabilityMap()
-//
-// }
 
 
 async function authFetch(url) {
@@ -3901,8 +3906,43 @@ async function authFetch(url) {
 
 }
 
+function reloadAll() {
+
+    console.log("Reloading → Source:", source, "Dataset:", database)
+
+    loadStocks()
+
+    if (activeStock) {
+        loadStock(activeStock)
+    }
+
+    renderInstabilityMap()
+    loadConvexityRadar()
+}
+
 document.addEventListener("DOMContentLoaded", function () {
 
+    // -------------------------
+    // 🔧 STATE INIT
+    // -------------------------
+    let sourceSelect = document.getElementById("sourceSelect")
+    let dbSelect = document.getElementById("dbSelect")
+
+    // restore state
+    source = localStorage.getItem("source") || "mongo"
+    database = localStorage.getItem("dataset") || "raw"
+
+    if (sourceSelect) sourceSelect.value = source
+    if (dbSelect) dbSelect.value = database
+
+    // disable dataset if mongo
+    if (source === "mongo" && dbSelect) {
+        dbSelect.disabled = true
+    }
+
+    // -------------------------
+    // 📦 STOCK SELECTOR
+    // -------------------------
     let stockSelect = document.getElementById("stockSelect")
 
     if (stockSelect) {
@@ -3911,14 +3951,15 @@ document.addEventListener("DOMContentLoaded", function () {
             if (!this.value) return
 
             activeStock = this.value
-
-            // 💾 persist across reloads
             localStorage.setItem("selectedStock", activeStock)
 
             loadStock(activeStock)
         })
     }
 
+    // -------------------------
+    // 🎚️ IV SLIDER
+    // -------------------------
     let ivSlider = document.getElementById("ivSlider")
 
     if (ivSlider) {
@@ -3927,17 +3968,18 @@ document.addEventListener("DOMContentLoaded", function () {
             let index = parseInt(this.value)
 
             renderIVSkew(index, spotSeries, flipSeries, chainHistory[index])
-
         })
     }
 
+    // -------------------------
+    // 🎚️ CHAIN SLIDER
+    // -------------------------
     let chainSlider = document.getElementById("chainSlider")
 
     if (chainSlider) {
         chainSlider.addEventListener("input", function () {
 
             let index = parseInt(this.value)
-
             let chain = chainHistory[index]
 
             renderOptionStructure(index)
@@ -3948,26 +3990,41 @@ document.addEventListener("DOMContentLoaded", function () {
 
             renderVega(chain)
             renderVegaExposure(chain)
-
         })
     }
 
-    let dbSelect = document.getElementById("dbSelect")
+    // -------------------------
+    // 🔁 SOURCE SELECTOR (NEW)
+    // -------------------------
+    if (sourceSelect) {
+        sourceSelect.addEventListener("change", function () {
 
+            source = this.value
+            localStorage.setItem("source", source)
+
+            console.log("Source switched:", source)
+
+            // disable dataset when mongo
+            if (dbSelect) {
+                dbSelect.disabled = (source === "mongo")
+            }
+
+            reloadAll()
+        })
+    }
+
+    // -------------------------
+    // 🔁 DATASET SELECTOR (UPDATED)
+    // -------------------------
     if (dbSelect) {
         dbSelect.addEventListener("change", function () {
 
             database = this.value
+            localStorage.setItem("dataset", database)
 
-            // reload stock list BUT preserve selection
-            loadStocks()
+            console.log("Dataset switched:", database)
 
-            // refresh current stock ONLY (no override)
-            if (activeStock) {
-                loadStock(activeStock)
-            }
-
-            renderInstabilityMap()
+            reloadAll()
         })
     }
 

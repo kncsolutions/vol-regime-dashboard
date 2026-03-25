@@ -39,17 +39,28 @@
         <div id="marketBanner" class="market-banner" style="padding:8px 15px;"></div>
 
         <!-- Control Bar -->
+        <!-- Control Bar -->
         <div style="
-        display:flex;
-        align-items:center;
-        gap:20px;
-        padding:10px 15px;
-        border-top: 1px solid #222;
-    ">
+    display:flex;
+    align-items:center;
+    gap:20px;
+    padding:10px 15px;
+    border-top: 1px solid #222;
+">
 
-            <!-- Database Selector -->
+            <!-- Source Selector (NEW) -->
             <div style="display:flex; align-items:center; gap:8px;">
-                <label style="color:white">Database:</label>
+                <label style="color:white">Source:</label>
+
+                <select id="sourceSelect">
+                    <option value="firebase">Firebase</option>
+                    <option value="mongo">MongoDB</option>
+                </select>
+            </div>
+
+            <!-- Dataset Selector (EXISTING, renamed meaning) -->
+            <div style="display:flex; align-items:center; gap:8px;">
+                <label style="color:white">Dataset:</label>
 
                 <select id="dbSelect">
                     <option value="cleaned">Cleaned Metrics</option>

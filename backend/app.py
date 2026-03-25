@@ -5,6 +5,8 @@ from firebase_admin import credentials, db, auth
 import pandas as pd
 from flask_cors import CORS
 import numpy as np
+from pymongo import MongoClient
+
 import requests
 import os
 
@@ -25,6 +27,19 @@ auth_app = firebase_admin.initialize_app(
     credentials.Certificate("dhelm-vol-regime-dashboard-firebase-adminsdk-fbsvc-0ed653c644.json"),
     name="authApp"
 )
+
+MONGO_URI = "mongodb://localhost:27017"
+mongo_client = MongoClient(MONGO_URI)
+
+mongo_db = mongo_client["volatility_db"]
+
+metrics_collection = mongo_db["vol_regime_metrics"]  # ✅
+metrics_cleaned_collection = mongo_db["vol_regime_metrics_cleaned"]  # ✅
+states_collection = mongo_db["vol_regime_states"]  # ⚠️ only if exists, else remove
+
+latest_collection = mongo_db["latest_vol_regime_metrics"]  # ✅
+flipzone_collection = mongo_db["flipzone_latest"]  # ✅
+stocks_collection = mongo_db["stocks_list"]  # ✅
 
 
 def verify_token():
@@ -50,6 +65,10 @@ app = Flask(__name__)
 CORS(app, supports_credentials=True)
 
 
+def get_db_type():
+    return request.args.get("source", "firebase")  # default firebase
+
+
 def get_root():
     dbname = request.args.get("db", "cleaned")
 
@@ -67,179 +86,431 @@ def home():
 @app.route("/api/stocks")
 def stocks():
     verify_token()
-    data = db.reference().child("stocks-list").get()
-    print("DATA:", data)  # 👈 debug
+    db_type = get_db_type()
 
-    return jsonify(list(data.keys()) if data else [])
+    if db_type == "mongo":
+        try:
+            cursor = stocks_collection.find({}, {"_id": 1})
 
+            symbols = [d["_id"] for d in cursor]
+            print('debugging..')
+            print('symbols', jsonify(symbols))
 
+            return jsonify(symbols)
 
+        except Exception as e:
+            print("Stocks error:", e)
+            return jsonify({"error": str(e)}), 500
+
+    else:
+        data = db.reference().child("stocks-list").get()
+        print('data fb', data)
+        return jsonify(list(data.keys()) if data else [])
 
 
 @app.route("/api/instability-map")
 def instability_map():
     verify_token()
+    db_type = get_db_type()
 
     try:
-        data = db.reference("latest-vol-regime-metrics").get()
+        # -------------------------
+        # 🔥 FETCH DATA
+        # -------------------------
+        if db_type == "mongo":
 
+            cursor = latest_collection.find({})
+
+            data = {}
+
+            for d in cursor:
+                symbol = str(d.get("_id"))
+                row = d
+
+                if not symbol or not row:
+                    continue
+
+                data[symbol] = row
+
+            print("mongo count:", len(data))
+
+        else:
+            data = db.reference("latest-vol-regime-metrics").get()
+            print("firebase count:", len(data) if data else 0)
+
+        # -------------------------
+        # 🛑 SAFETY CHECK
+        # -------------------------
         if not isinstance(data, dict):
             return jsonify([])
 
+        # -------------------------
+        # 🔥 COMPUTE RESULTS
+        # -------------------------
         results = []
 
         for symbol, row in data.items():
+            try:
+                spot = row.get("spot")
 
-            if not isinstance(row, dict):
-                continue
+                # ✅ FIXED flip extraction
+                flip = row.get("gamma_flip") or (row.get("gamma_zones") or {}).get("gamma_flip")
 
-            spot = row.get("spot")
-            flip = row.get("gamma_zones", {}).get("gamma_flip")
+                if spot is None or flip is None or flip == 0:
+                    continue
 
-            if not spot or not flip or flip == 0:
-                continue
+                results.append({
+                    "symbol": symbol,
+                    "distance": (spot - flip) / flip * 100,
+                    "I1": row.get("linear_instability_I1"),
+                    "I2": row.get("convexity_instability_I2"),
+                    "amp": row.get("amplification_factor")
+                })
 
-            results.append({
-                "symbol": symbol,
-                "distance": (spot - flip) / flip * 100,
-                "I1": row.get("linear_instability_I1"),
-                "I2": row.get("convexity_instability_I2"),
-                "amp": row.get("amplification_factor")
-            })
+            except Exception as e:
+                print("Row error:", symbol, e)
+
+        print("final results:", len(results))
 
         return jsonify(results)
 
     except Exception as e:
-        print("ERROR in /api/instability-map:", e)
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/flipzone")
 def flipzone():
-    user = verify_token()
-    data = db.reference("flipzone-latest").get()
+    verify_token()
+    db_type = get_db_type()
 
-    if not data:
-        return jsonify([])
+    try:
+        if db_type == "mongo":
 
-    return jsonify([
-        {
-            "symbol": symbol,
-            "distance": value.get("distance")
-        }
-        for symbol, value in data.items()
-    ])
+            cursor = latest_collection.find({}, {
+                "_id": 1,
+                "spot": 1,
+                "gamma_flip": 1,
+                "call_wall": 1,
+                "put_wall": 1,
+                "gex_gradient": 1,
+                "iv": 1,
+                "hv": 1,
+                "timestamp": 1
+            })
+
+            results = []
+
+            for d in cursor:
+                symbol = d.get("_id")
+
+                if not symbol:
+                    continue
+
+                # --- SAFE EXTRACTION ---
+                spot = d.get("spot")
+                gamma_flip = d.get("gamma_flip")
+                gex_gradient = d.get("gex_gradient")
+                iv = d.get("iv")
+                hv = d.get("hv")
+
+                try:
+                    spot = float(spot) if spot is not None else None
+                    gamma_flip = float(gamma_flip) if gamma_flip is not None else None
+                    gex_gradient = float(gex_gradient) if gex_gradient is not None else None
+                    iv = float(iv) if iv is not None else None
+                    hv = float(hv) if hv is not None else None
+                except:
+                    continue
+
+                # --- DISTANCE ---
+                distance = None
+                distance_pct = None
+
+                if spot is not None and gamma_flip is not None and spot != 0:
+                    distance = spot - gamma_flip
+                    distance_pct = (distance) / spot
+
+                # 🚨 FILTER: ONLY WITHIN 2%
+                if distance_pct is None or abs(distance_pct) > 0.02:
+                    continue
+
+                # --- GAMMA SCORE ---
+                gamma_explosion_score = None
+                if gex_gradient is not None and spot not in (None, 0):
+                    gamma_explosion_score = abs(gex_gradient) / spot
+
+                # --- VOL SPREAD ---
+                vol_spread = None
+                if iv is not None and hv is not None:
+                    vol_spread = iv - hv
+
+                results.append({
+                    "symbol": symbol,
+                    "distance": distance,
+                    "distance_pct": distance_pct,  # useful for frontend
+                    "gamma_explosion_score": gamma_explosion_score,
+                    "vol_spread": vol_spread,
+                    "timestamp": d.get("timestamp")
+                })
+
+            # --- FILTER VALID ---
+            results = [
+                r for r in results
+                if r["gamma_explosion_score"] is not None
+            ]
+
+            # --- SORT ---
+            results.sort(
+                key=lambda x: x["gamma_explosion_score"],
+                reverse=True
+            )
+
+            # --- LIMIT ---
+            results = results[:50]
+
+            print("flipzone count:", len(results))
+
+            return jsonify(results)
+
+        else:
+            data = db.reference("flipzone-latest").get()
+
+            return jsonify([
+                {
+                    "symbol": symbol,
+                    "distance": value.get("distance"),
+                    "gamma_explosion_score": value.get("gamma_explosion_score"),
+                    "timestamp": value.get("timestamp")
+                }
+                for symbol, value in data.items()
+            ])
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/gamma-explosion")
 def gamma_explosion():
-    user = verify_token()
-    # root_ref = get_root()
+    verify_token()
+    db_type = get_db_type()
 
-    flipzone = db.reference().child("flipzone-latest").get()
+    try:
+        results = []
 
-    if not flipzone:
-        return jsonify([])
+        if db_type == "mongo":
 
-    results = []
+            cursor = latest_collection.find({}, {
+                "_id": 1,
+                "spot": 1,
+                "gamma_flip": 1,
+                "gex_gradient": 1,
+                "iv": 1,
+                "hv": 1,
+                "timestamp": 1
+            })
 
-    for symbol, row in flipzone.items():
+            for d in cursor:
+                symbol = d.get("_id")
 
-        explosion_score = row.get("gamma_explosion_score")
-        distance = row.get("distance")
+                if not symbol:
+                    continue
 
-        if explosion_score is None:
-            continue
+                # --- SAFE EXTRACTION ---
+                try:
+                    spot = float(d.get("spot")) if d.get("spot") is not None else None
+                    gamma_flip = float(d.get("gamma_flip")) if d.get("gamma_flip") is not None else None
+                    gex_gradient = float(d.get("gex_gradient")) if d.get("gex_gradient") is not None else None
+                    iv = float(d.get("iv")) if d.get("iv") is not None else None
+                    hv = float(d.get("hv")) if d.get("hv") is not None else None
+                except:
+                    continue
 
-        results.append({
-            "symbol": symbol,
-            "distance": distance,
-            "gamma_explosion_score": float(explosion_score)
-        })
+                if spot is None or gex_gradient is None or spot == 0:
+                    continue
 
-    results = sorted(
-        results,
-        key=lambda x: x["gamma_explosion_score"],
-        reverse=True
-    )
+                # --- DISTANCE ---
+                distance = None
+                distance_pct = None
 
-    return jsonify(results)
+                if gamma_flip is not None:
+                    distance = spot - gamma_flip
+                    distance_pct = (distance) / spot
+
+                # 🚨 OPTIONAL FILTER (looser than flipzone)
+                if distance_pct is not None and abs(distance_pct) > 0.02:
+                    continue
+
+                # --- GAMMA EXPLOSION SCORE (UPGRADED) ---
+                gamma_explosion_score = None
+                if distance is not None:
+                    gamma_explosion_score = abs(gex_gradient) * abs(distance) / spot
+                else:
+                    gamma_explosion_score = abs(gex_gradient) / spot
+
+                # --- VOL CONTEXT ---
+                vol_spread = None
+                if iv is not None and hv is not None:
+                    vol_spread = iv - hv
+
+                results.append({
+                    "symbol": symbol,
+                    "distance": distance,
+                    "distance_pct": distance_pct,
+                    "gamma_explosion_score": gamma_explosion_score,
+                    "vol_spread": vol_spread,
+                    "timestamp": d.get("timestamp")
+                })
+                print("results:", results)
+
+        else:
+            data = db.reference().child("flipzone-latest").get()
+
+            for symbol, row in (data or {}).items():
+
+                explosion_score = row.get("gamma_explosion_score")
+                distance = row.get("distance")
+
+                if explosion_score is None:
+                    continue
+
+                results.append({
+                    "symbol": symbol,
+                    "distance": distance,
+                    "gamma_explosion_score": float(explosion_score)
+                })
+
+        # 🔥 FILTER VALID
+        results = [
+            r for r in results
+            if r["gamma_explosion_score"] is not None
+        ]
+
+        # 🔥 SORT DESC
+        results.sort(
+            key=lambda x: x["gamma_explosion_score"],
+            reverse=True
+        )
+
+        # 🔥 LIMIT (important for dashboard latency)
+        results = results[:50]
+
+        return jsonify(results)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/convexity-radar")
 def convexity_radar():
-    user = verify_token()
-    # 🔥 direct latest snapshot
-    data = db.reference().child("latest-vol-regime-metrics").get()
+    verify_token()
 
-    if not data:
-        return jsonify([])
+    db_type = request.args.get("source", "firebase")
 
-    results = []
+    try:
+        # -------------------------
+        # 🔥 DATA FETCH
+        # -------------------------
+        if db_type == "mongo":
 
-    for symbol, row in data.items():
+            cursor = latest_collection.find({})
+            data = {}
 
-        try:
+            for d in cursor:
+                symbol = str(d.get("_id"))
+                row = d
 
-            spot = row.get("spot")
-            gamma_zones = row.get("gamma_zones", {})
-            flip = gamma_zones.get("gamma_flip")
+                if not symbol or not row:
+                    continue
 
-            chain = row.get("option_chain")
+                data[symbol] = row
 
-            if not chain:
-                continue
+        else:
+            data = db.reference().child("latest-vol-regime-metrics").get()
 
-            gamma_instability = 0
-            vanna_pressure = 0
-            dealer_flow = 0
+        if not data:
+            return jsonify([])
 
-            # extract gex safely
-            gex = [o["net_gex"] for o in chain if o.get("net_gex") is not None]
+        results = []
 
-            if len(gex) < 3:
-                continue
+        # -------------------------
+        # 🔥 CORE COMPUTATION
+        # -------------------------
+        for symbol, row in data.items():
+            try:
+                spot = row.get("spot")
 
-            # ---- Gamma Instability (2nd derivative) ----
-            for i in range(1, len(gex) - 1):
-                gamma_instability += abs(
-                    gex[i + 1] - 2 * gex[i] + gex[i - 1]
-                )
+                # ✅ FIXED
+                flip = row.get("gamma_flip") or (row.get("gamma_zones") or {}).get("gamma_flip")
 
-            # ---- Vanna Pressure ----
-            for o in chain:
-                call_oi = o.get("call_oi", 0)
-                put_oi = o.get("put_oi", 0)
+                chain = row.get("option_chain")
 
-                net_oi = call_oi - put_oi
+                # ✅ SOFT fallback instead of skip
+                if not chain or not isinstance(chain, list):
+                    chain = []
 
-                delta = abs(o.get("call_delta", 0))
-                vanna = (o.get("vega", 0)) * (1 - delta)
+                gamma_instability = 0
+                vanna_pressure = 0
+                dealer_flow = 0
 
-                vanna_pressure += abs(vanna * net_oi)
-                dealer_flow += abs(o.get("net_gex", 0))
+                # ---- Extract GEX ----
+                gex = [
+                    o.get("net_gex")
+                    for o in chain
+                    if o.get("net_gex") is not None
+                ]
 
-            # ---- Flip Distance ----
-            if spot and flip:
-                flip_distance = abs(spot - flip) / spot
-            else:
-                flip_distance = 1
+                # ✅ SAFE gamma instability
+                if len(gex) >= 3:
+                    for i in range(1, len(gex) - 1):
+                        gamma_instability += abs(
+                            gex[i + 1] - 2 * gex[i] + gex[i - 1]
+                        )
 
-            results.append({
-                "symbol": symbol,
+                # ---- Vanna + Dealer Flow
+                for o in chain:
+                    call_oi = o.get("call_oi", 0)
+                    put_oi = o.get("put_oi", 0)
 
-                "gamma_instability": min(gamma_instability / 1e9, 1),
-                "vanna_pressure": min(vanna_pressure / 1e8, 1),
-                "dealer_flow": min(dealer_flow / 1e9, 1),
-                "flip_distance": min(flip_distance * 5, 1),
+                    net_oi = call_oi - put_oi
 
-                "shock_speed": 0.5
-            })
+                    delta = abs(o.get("call_delta", 0))
+                    vanna = o.get("vega", 0) * (1 - delta)
 
-        except Exception as e:
-            print("Radar error:", symbol, e)
+                    vanna_pressure += abs(vanna * net_oi)
+                    dealer_flow += abs(o.get("net_gex", 0))
 
-    return jsonify(results)
+                # ---- Flip Distance
+                if spot and flip:
+                    flip_distance = abs(spot - flip) / spot
+                else:
+                    flip_distance = 1
+
+                results.append({
+                    "symbol": symbol,
+                    "gamma_instability": min(gamma_instability / 1e9, 1),
+                    "vanna_pressure": min(vanna_pressure / 1e8, 1),
+                    "dealer_flow": min(dealer_flow / 1e9, 1),
+                    "flip_distance": min(flip_distance * 5, 1),
+                    "shock_speed": 0.5
+                })
+
+            except Exception as e:
+                print("Radar error:", symbol, e)
+
+        print("final radar count:", len(results))
+
+        return jsonify(results)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 def json_safe(df):
@@ -293,27 +564,50 @@ def clean_option_chain(chain):
 
 @app.route("/api/dashboard/<symbol>")
 def dashboard(symbol):
-    user = verify_token()
-    root_ref = get_root()
+    verify_token()
+    db_type = get_db_type()
 
-    ref = root_ref.child(symbol).child("metrics")
+    if db_type == "mongo":
 
-    # 🔥 fetch only last 3 timestamps
-    data = ref.order_by_key().limit_to_last(4).get()
+        doc = metrics_collection.find_one(
+            {"_id": symbol},
+            {"_id": 0, "data.metrics": 1}
+        )
 
+        if not doc:
+            return jsonify({})
 
-    if not data:
-        return jsonify({})
+        metrics = doc.get("data", {}).get("metrics", {})
 
-    df = pd.DataFrame(data).T
+        if not metrics:
+            return jsonify({})
 
-    # Convert epoch → UTC datetime
-    df.index = pd.to_datetime(df.index.astype(int), unit="s", utc=True)
+        # 🔥 Convert dict → DataFrame
+        df = pd.DataFrame(metrics).T
 
-    # Convert UTC → IST
-    df.index = df.index.tz_convert("Asia/Kolkata")
+        # keep only last 4
+        df = df.sort_index().iloc[-4:]
 
-    df = df.sort_index()
+        # -------------------------
+        # 🔥 TIME HANDLING
+        # -------------------------
+        df.index = pd.to_datetime(df.index.astype(int), unit="s", utc=True)
+        df.index = df.index.tz_convert("Asia/Kolkata")
+
+    else:
+        root_ref = get_root()
+        ref = root_ref.child(symbol).child("metrics")
+
+        data = ref.order_by_key().limit_to_last(4).get()
+
+        if not data:
+            return jsonify({})
+
+        df = pd.DataFrame(data).T
+
+        df.index = pd.to_datetime(df.index.astype(int), unit="s", utc=True)
+        df.index = df.index.tz_convert("Asia/Kolkata")
+        df = df.sort_index()
 
     print(df.index[:3])
     df = json_safe(df)
@@ -378,44 +672,102 @@ def dashboard(symbol):
         response["gex_gradient"] = df["gex_gradient"].tolist()
 
     response = sanitize_for_json(response)
-    print(response)
+    # print(response)
 
     return jsonify(response)
 
-@app.route("/api/latest/<stock_id>", methods=["GET"])
+
+from bson import ObjectId
+from datetime import datetime
+
+
+def mongo_serialize(obj):
+    if isinstance(obj, ObjectId):
+        return str(obj)
+    elif isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: mongo_serialize(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [mongo_serialize(i) for i in obj]
+    return obj
+
+
+@app.route("/api/latest/<stock_id>")
 def get_latest_snapshot(stock_id):
-    user = verify_token()
+    verify_token()
+
+    # ✅ FIX: read from query param directly
+    db_type = request.args.get("source", "firebase")
 
     try:
-        ref = db.reference(f"vol-regime-states/{stock_id}/states")
-        # Fetch only last 5 entries
-        data = ref.order_by_key().limit_to_last(5).get()
+        if db_type == "mongo":
 
-        if not data:
-            return jsonify({"error": "No data found"}), 404
+            doc = states_collection.find_one({"_id": stock_id})
 
-        # ✅ Sort timestamps
-        sorted_ts = sorted(data.keys())
+            if not doc:
+                return jsonify({
+                    "stock_id": stock_id,
+                    "count": 0,
+                    "data": []
+                })
 
-        # ✅ Take last 20
-        last_20_ts = sorted_ts[-20:]
+            states = doc.get("data", {}).get("states", {})
 
-        # ✅ Build ordered snapshot list
-        snapshots = [
-            {
-                "timestamp": ts,
-                "data": data[ts]
-            }
-            for ts in last_20_ts
-        ]
+            if not isinstance(states, dict) or not states:
+                return jsonify({
+                    "stock_id": stock_id,
+                    "count": 0,
+                    "data": []
+                })
 
-        return jsonify({
-            "stock_id": stock_id,
-            "count": len(snapshots),
-            "data": snapshots   # ✅ LIST instead of single object
-        })
+            # ✅ SAFE sorting
+            try:
+                sorted_ts = sorted(states.keys(), key=lambda x: int(x))
+            except:
+                # fallback if keys are weird
+                sorted_ts = sorted(states.keys())
+
+            last_ts = sorted_ts[-20:]
+
+            snapshots = [
+                {"timestamp": ts, "data": states.get(ts, {})}
+                for ts in last_ts
+            ]
+
+            return jsonify(mongo_serialize({
+                "stock_id": stock_id,
+                "latest_timestamp": doc.get("timestamp"),
+                "count": len(snapshots),
+                "data": snapshots
+            }))
+
+        else:
+            ref = db.reference(f"vol-regime-states/{stock_id}/states")
+            data = ref.order_by_key().limit_to_last(20).get()
+
+            if not data:
+                return jsonify({
+                    "stock_id": stock_id,
+                    "count": 0,
+                    "data": []
+                })
+
+            snapshots = [
+                {"timestamp": ts, "data": data[ts]}
+                for ts in sorted(data.keys())
+            ]
+
+            return jsonify({
+                "stock_id": stock_id,
+                "count": len(snapshots),
+                "data": snapshots
+            })
 
     except Exception as e:
+        import traceback
+        print("ERROR:", str(e))
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
@@ -427,13 +779,13 @@ def test():
 
 import os
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
-
 # if __name__ == "__main__":
-#     app.run(
-#         host="127.0.0.1",
-#         port=5000,
-#         debug=True
-#     )
+#     port = int(os.environ.get("PORT", 8080))
+#     app.run(host="0.0.0.0", port=port)
+
+if __name__ == "__main__":
+    app.run(
+        host="127.0.0.1",
+        port=5000,
+        debug=True
+    )
