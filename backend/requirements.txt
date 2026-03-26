@@ -5,3 +5,5 @@ flask-cors
 numpy
 scipy
 gunicorn
+pymongo
+dnspython

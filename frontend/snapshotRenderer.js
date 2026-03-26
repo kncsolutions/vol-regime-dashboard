@@ -855,6 +855,7 @@ function renderSnapshotIVSkew(optionChains) {
             axisLabel: {color: "#fff"},
             scale: true
         },
+        dataZoom: [{type: "inside"}, {type: "slider"}],
         graphic: [
             {
                 type: "text",
@@ -999,6 +1000,7 @@ function renderMultiExpiryGEX(optionChains, current_spot, gamma_flip) {
             name: "Net GEX",
             axisLabel: {color: "#fff"}
         },
+        dataZoom: [{type: "inside"}, {type: "slider"}],
         graphic: [
             // 🔥 Regime label
             {

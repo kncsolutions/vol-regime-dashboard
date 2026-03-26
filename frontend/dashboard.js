@@ -1,7 +1,16 @@
-// const API = "/api"
-const API = "http://127.0.0.1:5000/api"
-let source = localStorage.getItem("source") || "mongo"
+const API = "/api"
+//const API = "http://127.0.0.1:5000/api"
+const isLocalhost = window.location.hostname === "127.0.0.1"
+                 || window.location.hostname === "localhost";
+let source = localStorage.getItem("source") || "localdb"
+if (!isLocalhost) {
+    source = "localdb"
+    localStorage.setItem("source", source)
+}
 let database = localStorage.getItem("db") || "cleaned"
+if (!isLocalhost && sourceSelect) {
+    sourceSelect.disabled = true
+}
 let charts = {}
 let ivHistory = []
 let ivTimes = []
@@ -735,6 +744,7 @@ function renderCharmExposure(chain) {
         yAxis: {
             type: "value", axisLabel: {color: "#ccc"}
         },
+         dataZoom: [{type: "inside"}, {type: "slider"}],
 
         series: [{
             type: "bar", data: charm, itemStyle: {
@@ -811,6 +821,7 @@ function renderCharmWall(chain) {
         yAxis: {
             type: "value", axisLabel: {color: "#ccc"}
         },
+         dataZoom: [{type: "inside"}, {type: "slider"}],
 
         series: [{
 
@@ -968,6 +979,7 @@ function renderVommaWall(chain) {
         yAxis: {
             type: "value", axisLabel: {color: "#ccc"}
         },
+         dataZoom: [{type: "inside"}, {type: "slider"}],
 
         series: [{
 
@@ -1257,6 +1269,7 @@ function renderGammaLadder(chain) {
         yAxis: {
             type: "value"
         },
+         dataZoom: [{type: "inside"}, {type: "slider"}],
 
         series: [{
             name: "Cumulative Gamma",
@@ -1606,6 +1619,7 @@ function renderOI(chain) {
         yAxis: {
             type: "value"
         },
+        dataZoom: [{type: "inside"}, {type: "slider"}],
 
         series: [
 
@@ -1654,6 +1668,7 @@ function renderOIChange(chain) {
         yAxis: {
             type: "value"
         },
+         dataZoom: [{type: "inside"}, {type: "slider"}],
 
         series: [
 
@@ -1701,6 +1716,7 @@ function renderGammaExposure(chain) {
         yAxis: {
             type: "value", name: "Gamma Exposure"
         },
+         dataZoom: [{type: "inside"}, {type: "slider"}],
 
         series: [{
             name: "GEX", type: "bar", data: gex, itemStyle: {
@@ -1756,6 +1772,7 @@ function renderDealerHeatmap(chain) {
         yAxis: {
             type: "category", data: ["Call OI Change", "Put OI Change"], axisLabel: {color: "#fff"}
         },
+         dataZoom: [{type: "inside"}, {type: "slider"}],
 
         visualMap: {
             min: -500000, max: 500000, calculable: true, orient: "horizontal", left: "center", bottom: 20, inRange: {
@@ -1821,6 +1838,7 @@ function renderGammaWallMap(chain) {
         yAxis: {
             type: "value", name: "Gamma Exposure", axisLabel: {color: "#fff"}
         },
+         dataZoom: [{type: "inside"}, {type: "slider"}],
 
         series: [
 
@@ -1881,6 +1899,7 @@ function renderHedgingPressure(chain) {
         yAxis: {
             type: "value", name: "Hedging Pressure", axisLabel: {color: "#fff"}
         },
+         dataZoom: [{type: "inside"}, {type: "slider"}],
 
         series: [
 
@@ -2369,6 +2388,7 @@ function renderIVSkew(index, spotSeries, flipSeries, latestChain) {
             boundaryGap: ['5%', '5%']
 
         },
+         dataZoom: [{type: "inside"}, {type: "slider"}],
 
         series: [{
 
@@ -2377,6 +2397,7 @@ function renderIVSkew(index, spotSeries, flipSeries, latestChain) {
             lineStyle: {
                 width: 3, color: "#00c8ff"
             },
+
 
             markLine: {
                 symbol: "none", label: {
@@ -2557,6 +2578,7 @@ function renderGammaSpatialGradient(index) {
         yAxis: {
             type: "value", axisLabel: {color: "#fff"}
         },
+         dataZoom: [{type: "inside"}, {type: "slider"}],
 
         series: [{
             type: "line", data: gradient, smooth: true
@@ -2609,6 +2631,7 @@ function renderGammaConvexity(index) {
         yAxis: {
             type: "value", axisLabel: {color: "#fff"}
         },
+         dataZoom: [{type: "inside"}, {type: "slider"}],
         tooltip: {trigger: "axis"},
 
         series: [{
@@ -2676,6 +2699,7 @@ function renderGammaTemporal(index) {
             type: "value",
             axisLabel: {color: "#fff"}
         },
+         dataZoom: [{type: "inside"}, {type: "slider"}],
 
         series: [{
             type: "bar",
@@ -2759,6 +2783,7 @@ function renderGammaShockSpeed(index) {
             name: "Shock Speed",
             axisLabel: {color: "#fff"}
         },
+         dataZoom: [{type: "inside"}, {type: "slider"}],
         tooltip: {trigger: "axis"},
 
         series: [{
@@ -3547,6 +3572,7 @@ function renderGammaVannaSurface() {
         yAxis: {
             type: "category", name: "Time", data: ivTimes, axisLabel: {color: "#fff"}
         },
+         dataZoom: [{type: "inside"}, {type: "slider"}],
 
         visualMap: {
             min: -50000,
@@ -3926,6 +3952,17 @@ document.addEventListener("DOMContentLoaded", function () {
     // 🔧 STATE INIT
     // -------------------------
     let sourceSelect = document.getElementById("sourceSelect")
+    if (sourceSelect) {
+
+    // Remove disallowed options in production
+    if (!isLocalhost) {
+        [...sourceSelect.options].forEach(option => {
+            if (option.value === "mongo" || option.value === "firebase") {
+                option.remove()
+            }
+        })
+    }
+}
     let dbSelect = document.getElementById("dbSelect")
 
     // restore state
@@ -3936,9 +3973,9 @@ document.addEventListener("DOMContentLoaded", function () {
     if (dbSelect) dbSelect.value = database
 
     // disable dataset if mongo
-    if (source === "mongo" && dbSelect) {
-        dbSelect.disabled = true
-    }
+//    if (source === "mongo" && dbSelect) {
+//        dbSelect.disabled = true
+//    }
 
     // -------------------------
     // 📦 STOCK SELECTOR
@@ -4005,9 +4042,9 @@ document.addEventListener("DOMContentLoaded", function () {
             console.log("Source switched:", source)
 
             // disable dataset when mongo
-            if (dbSelect) {
-                dbSelect.disabled = (source === "mongo")
-            }
+//            if (dbSelect) {
+//                dbSelect.disabled = (source === "mongo" || source === "localdb")
+//            }
 
             reloadAll()
         })

@@ -6,6 +6,7 @@ import pandas as pd
 from flask_cors import CORS
 import numpy as np
 from pymongo import MongoClient
+import json
 
 import requests
 import os
@@ -41,6 +42,7 @@ latest_collection = mongo_db["latest_vol_regime_metrics"]  # ✅
 flipzone_collection = mongo_db["flipzone_latest"]  # ✅
 stocks_collection = mongo_db["stocks_list"]  # ✅
 
+DATABASE_DIR = "database"
 
 def verify_token():
     header = request.headers.get("Authorization")
@@ -65,8 +67,14 @@ app = Flask(__name__)
 CORS(app, supports_credentials=True)
 
 
+IS_PROD = os.environ.get("ENV") == "prod"
 def get_db_type():
-    return request.args.get("source", "firebase")  # default firebase
+    db = request.args.get("db", "localdb")
+
+    if IS_PROD and db != "localdb":
+        return "localdb"
+
+    return db
 
 
 def get_root():
@@ -76,6 +84,14 @@ def get_root():
         return db.reference("vol-regime-metrics")
 
     return db.reference("vol-regime-metrics-cleaned")
+
+def get_mongo_root():
+    dbname = request.args.get("db", "cleaned")
+
+    if dbname == "raw":
+        return metrics_collection
+
+    return metrics_cleaned_collection
 
 
 @app.route("/")
@@ -100,6 +116,28 @@ def stocks():
 
         except Exception as e:
             print("Stocks error:", e)
+            return jsonify({"error": str(e)}), 500
+
+    elif db_type == "localdb":
+        try:
+            file_path = os.path.join(DATABASE_DIR, f"{stocks_collection.name}.json")
+
+            if not os.path.exists(file_path):
+                return jsonify({"error": f"{file_path} not found"}), 404
+
+            with open(file_path, "r") as f:
+                data = json.load(f)
+
+            # Extract _id values like Mongo
+            symbols = [doc["_id"] for doc in data if "_id" in doc]
+
+            print('debugging (localdb)..')
+            print('symbols', symbols)
+
+            return jsonify(symbols)
+
+        except Exception as e:
+            print("LocalDB Stocks error:", e)
             return jsonify({"error": str(e)}), 500
 
     else:
@@ -133,6 +171,34 @@ def instability_map():
                 data[symbol] = row
 
             print("mongo count:", len(data))
+
+        elif db_type == "localdb":
+
+            try:
+                file_path = os.path.join(DATABASE_DIR, f"{latest_collection.name}.json")
+
+                if not os.path.exists(file_path):
+                    raise FileNotFoundError(f"{file_path} not found")
+
+                with open(file_path, "r") as f:
+                    documents = json.load(f)
+
+                data = {}
+
+                for d in documents:
+                    symbol = str(d.get("_id"))
+                    row = d
+
+                    if not symbol or not row:
+                        continue
+
+                    data[symbol] = row
+
+                print("localdb count:", len(data))
+
+            except Exception as e:
+                print("LocalDB error:", e)
+                return jsonify({"error": str(e)}), 500
 
         else:
             data = db.reference("latest-vol-regime-metrics").get()
@@ -274,6 +340,85 @@ def flipzone():
 
             return jsonify(results)
 
+        elif db_type == "localdb":
+
+            try:
+                file_path = os.path.join(DATABASE_DIR, f"{latest_collection.name}.json")
+
+                if not os.path.exists(file_path):
+                    raise FileNotFoundError(f"{file_path} not found")
+
+                with open(file_path, "r") as f:
+                    documents = json.load(f)
+
+                results = []
+
+                for d in documents:
+                    symbol = d.get("_id")
+
+                    if not symbol:
+                        continue
+
+                    # --- SAFE EXTRACTION ---
+                    spot = d.get("spot")
+                    gamma_flip = d.get("gamma_flip")
+                    gex_gradient = d.get("gex_gradient")
+                    iv = d.get("iv")
+                    hv = d.get("hv")
+
+                    try:
+                        spot = float(spot) if spot is not None else None
+                        gamma_flip = float(gamma_flip) if gamma_flip is not None else None
+                        gex_gradient = float(gex_gradient) if gex_gradient is not None else None
+                        iv = float(iv) if iv is not None else None
+                        hv = float(hv) if hv is not None else None
+                    except:
+                        continue
+
+                    # --- DISTANCE ---
+                    distance = None
+                    distance_pct = None
+
+                    if spot is not None and gamma_flip is not None and spot != 0:
+                        distance = spot - gamma_flip
+                        distance_pct = distance / spot
+
+                    if distance_pct is None or abs(distance_pct) > 0.02:
+                        continue
+
+                    # --- GAMMA SCORE ---
+                    gamma_explosion_score = None
+                    if gex_gradient is not None and spot not in (None, 0):
+                        gamma_explosion_score = abs(gex_gradient) / spot
+
+                    # --- VOL SPREAD ---
+                    vol_spread = None
+                    if iv is not None and hv is not None:
+                        vol_spread = iv - hv
+
+                    results.append({
+                        "symbol": symbol,
+                        "distance": distance,
+                        "distance_pct": distance_pct,
+                        "gamma_explosion_score": gamma_explosion_score,
+                        "vol_spread": vol_spread,
+                        "timestamp": d.get("timestamp")
+                    })
+
+                results = [r for r in results if r["gamma_explosion_score"] is not None]
+
+                results.sort(key=lambda x: x["gamma_explosion_score"], reverse=True)
+
+                results = results[:50]
+
+                print("flipzone count (localdb):", len(results))
+
+                return jsonify(results)
+
+            except Exception as e:
+                print("LocalDB error:", e)
+                return jsonify({"error": str(e)}), 500
+
         else:
             data = db.reference("flipzone-latest").get()
 
@@ -366,6 +511,73 @@ def gamma_explosion():
                 })
                 print("results:", results)
 
+        elif db_type == "localdb":
+
+            try:
+                file_path = os.path.join(DATABASE_DIR, f"{latest_collection.name}.json")
+
+                if not os.path.exists(file_path):
+                    raise FileNotFoundError(f"{file_path} not found")
+
+                with open(file_path, "r") as f:
+                    documents = json.load(f)
+
+                for d in documents:
+                    symbol = d.get("_id")
+
+                    if not symbol:
+                        continue
+
+                    # --- SAFE EXTRACTION ---
+                    try:
+                        spot = float(d.get("spot")) if d.get("spot") is not None else None
+                        gamma_flip = float(d.get("gamma_flip")) if d.get("gamma_flip") is not None else None
+                        gex_gradient = float(d.get("gex_gradient")) if d.get("gex_gradient") is not None else None
+                        iv = float(d.get("iv")) if d.get("iv") is not None else None
+                        hv = float(d.get("hv")) if d.get("hv") is not None else None
+                    except:
+                        continue
+
+                    if spot is None or gex_gradient is None or spot == 0:
+                        continue
+
+                    # --- DISTANCE ---
+                    distance = None
+                    distance_pct = None
+
+                    if gamma_flip is not None:
+                        distance = spot - gamma_flip
+                        distance_pct = distance / spot
+
+                    if distance_pct is not None and abs(distance_pct) > 0.02:
+                        continue
+
+                    # --- GAMMA EXPLOSION SCORE ---
+                    if distance is not None:
+                        gamma_explosion_score = abs(gex_gradient) * abs(distance) / spot
+                    else:
+                        gamma_explosion_score = abs(gex_gradient) / spot
+
+                    # --- VOL CONTEXT ---
+                    vol_spread = None
+                    if iv is not None and hv is not None:
+                        vol_spread = iv - hv
+
+                    results.append({
+                        "symbol": symbol,
+                        "distance": distance,
+                        "distance_pct": distance_pct,
+                        "gamma_explosion_score": gamma_explosion_score,
+                        "vol_spread": vol_spread,
+                        "timestamp": d.get("timestamp")
+                    })
+
+                    print("results (localdb):", results)
+
+            except Exception as e:
+                print("LocalDB error:", e)
+                return jsonify({"error": str(e)}), 500
+
         else:
             data = db.reference().child("flipzone-latest").get()
 
@@ -429,6 +641,32 @@ def convexity_radar():
                     continue
 
                 data[symbol] = row
+
+        elif db_type == "localdb":
+
+            try:
+                file_path = os.path.join(DATABASE_DIR, f"{latest_collection.name}.json")
+
+                if not os.path.exists(file_path):
+                    raise FileNotFoundError(f"{file_path} not found")
+
+                with open(file_path, "r") as f:
+                    documents = json.load(f)
+
+                data = {}
+
+                for d in documents:
+                    symbol = str(d.get("_id"))
+                    row = d
+
+                    if not symbol or not row:
+                        continue
+
+                    data[symbol] = row
+
+            except Exception as e:
+                print("LocalDB error:", e)
+                return jsonify({"error": str(e)}), 500
 
         else:
             data = db.reference().child("latest-vol-regime-metrics").get()
@@ -568,8 +806,10 @@ def dashboard(symbol):
     db_type = get_db_type()
 
     if db_type == "mongo":
+        db_root = get_mongo_root()
 
-        doc = metrics_collection.find_one(
+
+        doc = db_root.find_one(
             {"_id": symbol},
             {"_id": 0, "data.metrics": 1}
         )
@@ -593,6 +833,43 @@ def dashboard(symbol):
         # -------------------------
         df.index = pd.to_datetime(df.index.astype(int), unit="s", utc=True)
         df.index = df.index.tz_convert("Asia/Kolkata")
+
+    elif db_type == "localdb":
+
+        try:
+            db_root = get_mongo_root()
+            file_path = os.path.join(DATABASE_DIR, f"{db_root.name}.json")
+
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"{file_path} not found")
+
+            with open(file_path, "r") as f:
+                documents = json.load(f)
+
+            # 🔍 Find the matching symbol document
+            doc = next((d for d in documents if str(d.get("_id")) == symbol), None)
+
+            if not doc:
+                return jsonify({})
+
+            metrics = doc.get("data", {}).get("metrics", {})
+
+            if not metrics:
+                return jsonify({})
+
+            # 🔥 Convert dict → DataFrame
+            df = pd.DataFrame(metrics).T
+
+            # keep only last 4
+            df = df.sort_index().iloc[-4:]
+
+            # 🔥 TIME HANDLING
+            df.index = pd.to_datetime(df.index.astype(int), unit="s", utc=True)
+            df.index = df.index.tz_convert("Asia/Kolkata")
+
+        except Exception as e:
+            print("LocalDB error:", e)
+            return jsonify({"error": str(e)}), 500
 
     else:
         root_ref = get_root()
@@ -742,6 +1019,61 @@ def get_latest_snapshot(stock_id):
                 "data": snapshots
             }))
 
+        elif db_type == "localdb":
+
+            try:
+                file_path = os.path.join(DATABASE_DIR, f"{states_collection.name}.json")
+
+                if not os.path.exists(file_path):
+                    raise FileNotFoundError(f"{file_path} not found")
+
+                with open(file_path, "r") as f:
+                    documents = json.load(f)
+
+                # 🔍 Find document for stock_id
+                doc = next((d for d in documents if str(d.get("_id")) == stock_id), None)
+
+                if not doc:
+                    return jsonify({
+                        "stock_id": stock_id,
+                        "count": 0,
+                        "data": []
+                    })
+
+                states = doc.get("data", {}).get("states", {})
+
+                if not isinstance(states, dict) or not states:
+                    return jsonify({
+                        "stock_id": stock_id,
+                        "count": 0,
+                        "data": []
+                    })
+
+                # ✅ SAFE sorting (same as mongo)
+                try:
+                    sorted_ts = sorted(states.keys(), key=lambda x: int(x))
+                except:
+                    sorted_ts = sorted(states.keys())
+
+                last_ts = sorted_ts[-20:]
+
+                snapshots = [
+                    {"timestamp": ts, "data": states.get(ts, {})}
+                    for ts in last_ts
+                ]
+
+                return jsonify({
+                    "stock_id": stock_id,
+                    "latest_timestamp": doc.get("timestamp"),
+                    "count": len(snapshots),
+                    "data": snapshots
+                })
+
+            except Exception as e:
+                print("LocalDB error:", e)
+                return jsonify({"error": str(e)}), 500
+                return jsonify({"error": str(e)}), 500
+
         else:
             ref = db.reference(f"vol-regime-states/{stock_id}/states")
             data = ref.order_by_key().limit_to_last(20).get()
@@ -779,13 +1111,13 @@ def test():
 
 import os
 
-# if __name__ == "__main__":
-#     port = int(os.environ.get("PORT", 8080))
-#     app.run(host="0.0.0.0", port=port)
-
 if __name__ == "__main__":
-    app.run(
-        host="127.0.0.1",
-        port=5000,
-        debug=True
-    )
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+# if __name__ == "__main__":
+#     app.run(
+#         host="127.0.0.1",
+#         port=5000,
+#         debug=True
+#     )
