@@ -6,6 +6,7 @@
     <script src="https://cdn.jsdelivr.net/npm/echarts/dist/echarts.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/echarts-gl/dist/echarts-gl.min.js"></script>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
 
@@ -85,6 +86,7 @@
 
         <div class="tab active" data-tab="chartsTab">Charts</div>
         <div class="tab" data-tab="snapshotsTab">Snapshots</div>
+        <div class="tab" data-tab="realtimeTab">Realtime</div>
 
     </div>
 
@@ -532,6 +534,41 @@
         </div>
 
     </div>
+    <div id="realtimeTab" class="tab-content">
+
+        <div class="layout">
+
+            <!-- 🌐 STOCK UNIVERSE -->
+            <div class="chart-section">
+
+                <!-- 🔍 Search -->
+                <div class="panel universe-panel">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <label style="color:white">Select Stock for charting:</label>
+                        <input list="stockchartList" id="stockSelectchart" placeholder="Type or select stock..."/>
+                        <datalist id="stockchartList"></datalist>
+                    </div>
+                </div>
+
+                <!-- 📊 Chart -->
+                <div class="tf-selector">
+                    <button data-tf="1m">1m</button>
+                    <button data-tf="5m">5m</button>
+                    <button data-tf="15m">15m</button>
+                    <button data-tf="60m">60m</button>
+                    <button data-tf="1d" class="active">1D</button>
+                </div>
+
+
+            </div>
+
+        </div>
+        <div class="panel chart-panel">
+            <h3>Chart</h3>
+            <div id="realtimeChartContainer"></div>
+        </div>
+
+    </div>
     <h3>Market Instability Map</h3>
 
     <div id="instabilityMap" style="height:600px"></div>
@@ -564,6 +601,7 @@
 
     </footer>
 </div>
+<script src="realtimeRenderer.js"></script>
 <script src="dashboard.js"></script>
 <script src="snapshotRenderer.js"></script>
 </body>

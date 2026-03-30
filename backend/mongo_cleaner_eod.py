@@ -14,7 +14,6 @@ target_collection = target_db["vol_regime_metrics_cleaned"]
 
 # Optional: clear target collection before insert
 target_collection.delete_many({})
-input('wait...')
 # -----------------------------
 # 🧠 PROCESS DATA
 # -----------------------------

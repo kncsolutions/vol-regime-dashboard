@@ -7,6 +7,7 @@ from flask_cors import CORS
 import numpy as np
 from pymongo import MongoClient
 import json
+from dhan_data_extractor import DhanClient
 
 import requests
 import os
@@ -28,6 +29,15 @@ auth_app = firebase_admin.initialize_app(
     credentials.Certificate("dhelm-vol-regime-dashboard-firebase-adminsdk-fbsvc-0ed653c644.json"),
     name="authApp"
 )
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "dhanconfig.json")
+
+with open(CONFIG_PATH) as f:
+    CONFIG = json.load(f)
+DHAN_TOKEN = CONFIG["auth"]["token"]
+print(DHAN_TOKEN)
+DHAN_CLIENT_ID = CONFIG["auth"]["client_id"]
+print(DHAN_CLIENT_ID)
+dhan = DhanClient(DHAN_TOKEN, DHAN_CLIENT_ID)
 
 MONGO_URI = "mongodb://localhost:27017"
 mongo_client = MongoClient(MONGO_URI)
@@ -68,8 +78,10 @@ CORS(app, supports_credentials=True)
 
 
 IS_PROD = os.environ.get("ENV") == "prod"
+# IS_PROD = False
 def get_db_type():
-    db = request.args.get("db", "localdb")
+    db = request.args.get("source", "localdb")
+    print(db)
 
     if IS_PROD and db != "localdb":
         return "localdb"
@@ -236,7 +248,7 @@ def instability_map():
             except Exception as e:
                 print("Row error:", symbol, e)
 
-        print("final results:", len(results))
+        # print("final results:", len(results))
 
         return jsonify(results)
 
@@ -509,7 +521,7 @@ def gamma_explosion():
                     "vol_spread": vol_spread,
                     "timestamp": d.get("timestamp")
                 })
-                print("results:", results)
+                # print("results:", results)
 
         elif db_type == "localdb":
 
@@ -572,7 +584,7 @@ def gamma_explosion():
                         "timestamp": d.get("timestamp")
                     })
 
-                    print("results (localdb):", results)
+                    # print("results (localdb):", results)
 
             except Exception as e:
                 print("LocalDB error:", e)
@@ -622,7 +634,7 @@ def gamma_explosion():
 def convexity_radar():
     verify_token()
 
-    db_type = request.args.get("source", "firebase")
+    db_type = get_db_type()
 
     try:
         # -------------------------
@@ -826,7 +838,7 @@ def dashboard(symbol):
         df = pd.DataFrame(metrics).T
 
         # keep only last 4
-        df = df.sort_index().iloc[-4:]
+        df = df.sort_index().iloc[-8:]
 
         # -------------------------
         # 🔥 TIME HANDLING
@@ -861,7 +873,7 @@ def dashboard(symbol):
             df = pd.DataFrame(metrics).T
 
             # keep only last 4
-            df = df.sort_index().iloc[-4:]
+            df = df.sort_index().iloc[-8:]
 
             # 🔥 TIME HANDLING
             df.index = pd.to_datetime(df.index.astype(int), unit="s", utc=True)
@@ -886,7 +898,7 @@ def dashboard(symbol):
         df.index = df.index.tz_convert("Asia/Kolkata")
         df = df.sort_index()
 
-    print(df.index[:3])
+    # print(df.index[:3])
     df = json_safe(df)
 
     if "gamma_zones" in df.columns:
@@ -975,7 +987,7 @@ def get_latest_snapshot(stock_id):
     verify_token()
 
     # ✅ FIX: read from query param directly
-    db_type = request.args.get("source", "firebase")
+    db_type = get_db_type()
 
     try:
         if db_type == "mongo":
@@ -1005,7 +1017,7 @@ def get_latest_snapshot(stock_id):
                 # fallback if keys are weird
                 sorted_ts = sorted(states.keys())
 
-            last_ts = sorted_ts[-20:]
+            last_ts = sorted_ts[-8:]
 
             snapshots = [
                 {"timestamp": ts, "data": states.get(ts, {})}
@@ -1055,7 +1067,7 @@ def get_latest_snapshot(stock_id):
                 except:
                     sorted_ts = sorted(states.keys())
 
-                last_ts = sorted_ts[-20:]
+                last_ts = sorted_ts[-8:]
 
                 snapshots = [
                     {"timestamp": ts, "data": states.get(ts, {})}
@@ -1072,11 +1084,10 @@ def get_latest_snapshot(stock_id):
             except Exception as e:
                 print("LocalDB error:", e)
                 return jsonify({"error": str(e)}), 500
-                return jsonify({"error": str(e)}), 500
 
         else:
             ref = db.reference(f"vol-regime-states/{stock_id}/states")
-            data = ref.order_by_key().limit_to_last(20).get()
+            data = ref.order_by_key().limit_to_last(8).get()
 
             if not data:
                 return jsonify({
@@ -1103,6 +1114,105 @@ def get_latest_snapshot(stock_id):
         return jsonify({"error": str(e)}), 500
 
 
+
+@app.route("/api/liststocks")
+def liststocks():
+    verify_token()
+
+    try:
+        data = db.reference("stocks").get()
+
+        if not data:
+            return jsonify([])
+
+        results = []
+
+        for symbol, value in data.items():
+            if not isinstance(value, dict):
+                continue
+
+            results.append({
+                "symbol": symbol,
+                "id": value.get("ID"),
+                "lot_size": value.get("LotSize"),
+                "security_id": value.get("security_id")
+            })
+
+        return jsonify(results)
+
+    except Exception as e:
+        print("liststocks error:", e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/historical/<security_id>")
+def get_historical(security_id):
+    verify_token()
+    tf = request.args.get("tf", "1d")
+    underlying = request.args.get("underlying_security")
+
+    print(security_id, underlying, tf)
+    # try:
+    if tf == "1d":
+        print(security_id)
+        print(underlying)
+        data = dhan.get_daily_spot_data(security_id=security_id, under_security=underlying)
+    else:
+        data = dhan.get_intrday_spot_data(
+            security_id=security_id,
+            under_security=underlying,
+            timeframe=tf)
+    return jsonify(data)
+
+    # except Exception as e:
+    #     return jsonify({"error": str(e)}), 500
+
+
+
+
+from datetime import datetime, date
+
+def get_valid_expiry(expiries):
+
+    today = date.today()
+
+    for exp in expiries:
+        exp_date = datetime.strptime(exp, "%Y-%m-%d").date()
+
+        # ❌ skip today's expiry
+        if exp_date == today:
+            continue
+
+        # ✅ take next valid future expiry
+        if exp_date > today:
+            return exp
+
+    return expiries[0]
+
+
+
+@app.route("/api/option-chain/<security_id>")
+def get_option_chain(security_id):
+
+    verify_token()
+    underlying = request.args.get("underlying_security")
+
+    # try:
+    expiries = dhan.get_expiry_list(under_security_id=int(security_id),
+                                    under_security=underlying)
+    print(expiries)
+    selected_expiry = get_valid_expiry(expiries)
+
+    print("Selected expiry:", selected_expiry)
+    data = dhan.get_option_chain(
+        under_security_id= security_id,
+            underlying=underlying,
+            expiry=selected_expiry)
+    return jsonify(data)
+
+    # except Exception as e:
+    #     return jsonify({"error": str(e)}), 500
+
 @app.route("/api/test")
 def test():
     user = verify_token()
@@ -1111,13 +1221,13 @@ def test():
 
 import os
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
-
 # if __name__ == "__main__":
-#     app.run(
-#         host="127.0.0.1",
-#         port=5000,
-#         debug=True
-#     )
+#     port = int(os.environ.get("PORT", 8080))
+#     app.run(host="0.0.0.0", port=port)
+
+if __name__ == "__main__":
+    app.run(
+        host="127.0.0.1",
+        port=5000,
+        debug=True
+    )

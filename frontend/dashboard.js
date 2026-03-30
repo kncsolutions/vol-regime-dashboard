@@ -1,5 +1,5 @@
-const API = "/api"
-//const API = "http://127.0.0.1:5000/api"
+//const API = "/api"
+const API = "http://127.0.0.1:5000/api"
 const isLocalhost = window.location.hostname === "127.0.0.1"
                  || window.location.hostname === "localhost";
 let source = localStorage.getItem("source") || "localdb"
@@ -19,6 +19,11 @@ let chainHistory = []   // ← ADD THIS
 let spotSeries = []
 let flipSeries = []
 let activeStock = null
+
+ // 🔥 NEW STATE
+let universe = new Map()   // all stocks from API
+let watchlist = new Map()  // selected stocks
+
 
 function sortChainByStrike(chain) {
 
@@ -1408,7 +1413,7 @@ Market is long volatility
 Typically:
 Dealers are long vega.Customers are short vol (selling options)
 Interpretation: If IV up => dealers gain and If IV down => dealers lose
-Behavioral impact: Dealers are comfortable with rising vol. They don’t need to hedge aggressively
+Behavioral impact: Dealers are comfortable with rising vol. They do not need to hedge aggressively
 Result: Volatility can expand smoothly. Trends can sustain
 -Negative Cumulative VEX
 Market is short volatility
@@ -2582,7 +2587,42 @@ function renderGammaSpatialGradient(index) {
 
         series: [{
             type: "line", data: gradient, smooth: true
-        }]
+        }],
+         graphic: [
+            // 🔵 Title Guide
+            {
+                type: "text",
+                left: "15%",
+                top: "5%",
+                z: 100,
+                style: {
+                    text:
+                        `
+It measures how dealer gamma exposure changes as price moves through different levels.
+Gamma Cliff = Flow Shock Zone
+When price approaches a gamma cliff:
+Before the Cliff-Hedging is relatively stable.Market behaves normally.
+At the Cliff-Tiny price move => huge change in GEX.Dealers must rapidly rebalance.
+Liquidity gets stressed.After Crossing-Market enters a new regime.
+Often: Volatility expansion and Directional acceleration.
+Sign Matters (Very Important)
+Positive Gradient-Moving up => GEX increases.Dealers become more long gamma.
+Effect:Increasing stabilization and Volatility compression ahead.
+Negative Gradient-Moving up => GEX decreases.Dealers become more short gamma.
+Effect: Increasing instability and Higher chance of sharp moves/squeezes.
+-Connection to Gamma Flip-Gamma cliffs often sit near:Gamma flip zones,
+Large OI strikes, Expiry pinning levels.
+Crossing a cliff can mean:Long gamma => short gamma transition
+Or vice versa.
+`,
+                    fill: "#ddd",
+                    font: "12px monospace",
+                    opacity: 0.5,
+                    lineHeight: 18
+                }
+            }
+
+        ]
 
     })
 }
@@ -2636,7 +2676,41 @@ function renderGammaConvexity(index) {
 
         series: [{
             type: "bar", data: convexity
-        }]
+        }],
+        graphic: [
+            // 🔵 Title Guide
+            {
+                type: "text",
+                left: "15%",
+                top: "5%",
+                z: 100,
+                style: {
+                    text:
+                        `
+It tells you whether hedging flows are becoming
+more aggressive or fading as price moves.
+1. Positive Second Derivative-Convex GEX curve
+Implication:
+As price moves => hedging pressure accelerates in same direction.
+Feedback loop strengthens
+Market Behavior:Increasing instability,Stronger squeezes,Trend reinforcement.
+This is where convexity instability (I2 > 0) shows up.
+2. Negative Second Derivative
+Concave GEX curve -Implication:
+Hedging pressure decelerates.System absorbs shocks
+Market Behavior:Mean reversion,Vol suppression,Stabilizing flows
+3. Near Zero Second Derivative
+Linear regime -Hedging flows change at constant rate,
+No nonlinear feedback, Predictable behavior
+`,
+                    fill: "#ddd",
+                    font: "12px monospace",
+                    opacity: 0.5,
+                    lineHeight: 18
+                }
+            }
+
+        ]
 
     })
 }
@@ -2709,7 +2783,51 @@ function renderGammaTemporal(index) {
                     return p.value >= 0 ? "#00ff9c" : "#ff4d4d"
                 }
             }
-        }]
+        }],
+        graphic: [
+            // 🔵 Title Guide
+            {
+                type: "text",
+                left: "15%",
+                top: "5%",
+                z: 100,
+                style: {
+                    text:
+                        `
+It measures how fast the dealer hedging regime is evolving as time passes—mainly due to theta decay, expiry roll-down,
+and OI redistribution.
+Why GEX Changes With Time?Even if spot stays constant, GEX changes because: Theta decay-Options
+lose extrinsic value.
+Gamma profile reshapes (especially near ATM)-Expiry approach-Near-expiry gamma becomes very sharp
+and concentrated-OI migration.Traders roll positions → reshaping GEX surface
+Interpretation of d(GEX)/dt.
+1. Positive Temporal Gradient-GEX is increasing over time,Implication:Market becoming more long
+gamma,Dealers hedge more passively.Market Behavior:Volatility compression,Stronger pinning,
+Reduced realized vol.
+2. Negative Temporal Gradient-GEX is decreasing over time Implication:Market moving toward short gamma regime
+Market Behavior:Vol expansion,Increasing fragility,Higher probability of large moves.
+Microstructure Interpretation-
+1. Hedging Regime Drift-Even without price movement:Dealers must continuously rebalance Because gamma sensitivity itself is changing.
+2. Intraday Instability Source - Temporal gradient creates:Instability without price movement
+This is critical:Market can suddenly start moving even after being quiet .Because the hedging landscape has shifted underneath.
+3. Pre-Expiry Effects-As expiry approaches:Gamma becomes:More localized (ATM spike) and More unstable
+Leads to:Pinning -> then sudden release or Compression -> expansion cycles.
+--Key Trading Signals--
+Rapidly Negative -Market losing stability fast.Expect:Breakouts or Vol expansion. Very common
+before:Large intraday moves and Post-lunch expansions.
+Rapidly Positive -Market becoming pinned
+Expect:Range-bound action or IV crush.
+Sign Flip-
+Strong signal of:Regime transition or Flow realignment.
+`,
+                    fill: "#ddd",
+                    font: "8px monospace",
+                    opacity: 0.5,
+                    lineHeight: 18
+                }
+            }
+
+        ]
     })
 }
 
@@ -3838,6 +3956,41 @@ async function fetchSnapshot() {
     }
 }
 
+//--------------------------------------------------
+// 🌐 LOAD STOCK UNIVERSE (FROM BACKEND)
+//--------------------------------------------------
+async function loadStocksFromAPI() {
+    try {
+        const res = await authFetch(`${API}/liststocks`)
+        const data = await res.json()
+
+        universe.clear()
+
+        data.forEach(stock => {
+
+            // 🔥 Normalize + store full object
+            const normalized = {
+                symbol: stock.symbol,
+                id: stock.id || null,
+                lotSize: stock.lot_size || null,
+                securityId: stock.security_id || null,
+
+                // 👉 keep raw as fallback (important)
+                raw: stock
+            }
+
+            universe.set(stock.symbol, normalized)
+        })
+
+        console.log("🌐 Universe loaded:", [...universe.values()])
+
+        // ✅ render if needed
+        RealtimeRenderer.renderUniverseUI(universe)
+
+    } catch (err) {
+        console.error("❌ Failed to load stocks:", err)
+    }
+}
 function switchTab(tabId, el) {
     console.log('Active Stock:' + activeStock)
     // remove active from all tabs
@@ -3855,6 +4008,20 @@ function switchTab(tabId, el) {
     el.classList.add("active")
 
     // -----------------------------
+    // 🔥 REALTIME CONTROL
+    // -----------------------------
+    if (tabId === "realtimeTab") {
+
+
+            RealtimeRenderer.initRealtimeChart("realtimeChartContainer")
+            loadStocksFromAPI()
+            RealtimeRenderer.initSearch(universe)
+
+//            RealtimeRenderer.startRealtimeFake()
+
+        }
+
+    // -----------------------------
     // 🔥 LOAD SNAPSHOTS ON DEMAND
     // -----------------------------
     if (tabId === "snapshotsTab") {
@@ -3865,6 +4032,7 @@ function switchTab(tabId, el) {
             renderSnapshotsUI()
         }, 0)
     }
+
 
     // -----------------------------
     // Resize charts (important)
@@ -3903,6 +4071,50 @@ async function loadSnapshotsForStock(stock) {
             renderSnapshotsUI()
         }, 0)
 
+    }
+}
+
+/*************Realtime*******************/
+async function loadRealtimeData() {
+
+    if (!activeStock) return
+
+        try {
+            initRealtimeChart()
+
+              // load history first
+            const res = await fetch(`${API}/ohlc/${activeStock}`)
+            const history = await res.json()
+
+            setInitialCandles(history)
+
+            // start streaming
+            startRealtimePolling(`${API}/realtime-candle/${activeStock}`)
+
+        } catch (err) {
+            console.error("Realtime error:", err)
+    }
+}
+
+function startRealtime() {
+
+    if (realtimeInterval) return  // already running
+
+    console.log("▶️ Starting realtime stream")
+
+    loadRealtimeData() // immediate call
+
+    realtimeInterval = setInterval(() => {
+        loadRealtimeData()
+    }, 2000) // 🔁 every 2 sec (tune this)
+}
+
+function stopRealtime() {
+
+    if (realtimeInterval) {
+        console.log("⏹️ Stopping realtime stream")
+        clearInterval(realtimeInterval)
+        realtimeInterval = null
     }
 }
 
@@ -4064,6 +4276,13 @@ document.addEventListener("DOMContentLoaded", function () {
             reloadAll()
         })
     }
+    // 🔥 ADD THIS AT THE END
+    document.querySelectorAll(".tab").forEach(tab => {
+        tab.addEventListener("click", function () {
+            const tabId = this.getAttribute("data-tab")
+            switchTab(tabId, this)
+        })
+    })
 
 })
 
