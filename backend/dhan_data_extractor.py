@@ -283,6 +283,53 @@ class DhanClient:
         if not response:
             return None
 
+    def get_realtime_quote_data(
+            self, security_id: int,
+            under_security: str,
+            instrument_type: str = "EQUITY",
+            exchange_segment: str = "NSE_EQ"
+        ):
+        time.sleep(0.4)
+        try:
+            if under_security == 'NIFTY' or under_security == 'BANKNIFTY':
+                exchange_segment = "IDX_I"
+                instrument_type = "INDEX"
+            securities ={str(exchange_segment): [int(security_id)]}
+            print(securities)
+
+            # 🔹 API call
+            response = self.dhan.quote_data(securities=securities)
+
+            # 🔹 Check response exists
+            if not response:
+                print("⚠️ Empty response from API")
+                return None
+
+            # 🔹 Ensure dict
+            if not isinstance(response, dict):
+                print("⚠️ Unexpected response type:", type(response))
+                return None
+
+            # 🔹 Check status
+            if response.get("status") != "success":
+                print("⚠️ API returned failure:", response)
+                return None
+
+            # 🔹 Extract nested data safely
+            data_block = response.get("data", {}).get("data", {})
+
+            if not data_block:
+                print("⚠️ No data in response:", response)
+                return None
+
+            # 🔹 Parse into DataFrame
+            print(response)
+            return response
+
+        except Exception as e:
+            print("❌ Exception in _get_quote_data:", str(e))
+            return None
+
     def _get_quote_data(self, securities):
         time.sleep(0.4)
         try:

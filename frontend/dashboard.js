@@ -3991,6 +3991,7 @@ async function loadStocksFromAPI() {
         console.error("❌ Failed to load stocks:", err)
     }
 }
+let isRealtimeInitialized = false;
 function switchTab(tabId, el) {
     console.log('Active Stock:' + activeStock)
     // remove active from all tabs
@@ -4012,14 +4013,15 @@ function switchTab(tabId, el) {
     // -----------------------------
     if (tabId === "realtimeTab") {
 
+    if (!isRealtimeInitialized) {
 
-            RealtimeRenderer.initRealtimeChart("realtimeChartContainer")
-            loadStocksFromAPI()
-            RealtimeRenderer.initSearch(universe)
+        RealtimeRenderer.initRealtimeChart("realtimeChartContainer")
+        loadStocksFromAPI()
+        RealtimeRenderer.initSearch(universe)
 
-//            RealtimeRenderer.startRealtimeFake()
-
-        }
+        isRealtimeInitialized = true;
+    }
+}
 
     // -----------------------------
     // 🔥 LOAD SNAPSHOTS ON DEMAND

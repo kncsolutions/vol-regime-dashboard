@@ -1197,21 +1197,46 @@ def get_option_chain(security_id):
     verify_token()
     underlying = request.args.get("underlying_security")
 
-    # try:
-    expiries = dhan.get_expiry_list(under_security_id=int(security_id),
-                                    under_security=underlying)
-    print(expiries)
-    selected_expiry = get_valid_expiry(expiries)
+    try:
+        expiries = dhan.get_expiry_list(under_security_id=int(security_id),
+                                        under_security=underlying)
+        print(expiries)
+        selected_expiry = get_valid_expiry(expiries)
 
-    print("Selected expiry:", selected_expiry)
-    data = dhan.get_option_chain(
-        under_security_id= security_id,
-            underlying=underlying,
-            expiry=selected_expiry)
-    return jsonify(data)
+        print("Selected expiry:", selected_expiry)
+        data = dhan.get_option_chain(
+            under_security_id= security_id,
+                underlying=underlying,
+                expiry=selected_expiry)
+        return jsonify(data)
 
-    # except Exception as e:
-    #     return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+
+
+@app.route("/api/quote/<security_id>")
+def get_quote(security_id):
+
+    verify_token()
+    underlying = request.args.get("underlying_security")
+
+    try:
+        data = dhan.get_realtime_quote_data(
+            security_id=security_id,
+        under_security=underlying)
+
+        if not data:
+            return jsonify({"error": "No quote data"}), 500
+
+        return jsonify({
+            "status": "success",
+            "data": data
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/test")
 def test():
