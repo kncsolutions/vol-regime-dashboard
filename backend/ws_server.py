@@ -6,9 +6,9 @@ import os
 
 app = FastAPI()
 
-clients = set()
-
+# -----------------------------
 # 🔐 Load config
+# -----------------------------
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "dhanconfig.json")
 
 with open(CONFIG_PATH) as f:
@@ -17,6 +17,16 @@ with open(CONFIG_PATH) as f:
 DHAN_TOKEN = CONFIG["auth"]["token"]
 DHAN_CLIENT_ID = CONFIG["auth"]["client_id"]
 
+# -----------------------------
+# 🌐 State
+# -----------------------------
+clients = set()
+
+# per-client subscriptions
+client_subscriptions = {}  # {ws: securityId}
+
+# queue for dhan subscription updates
+subscription_queue = asyncio.Queue()
 
 # -----------------------------
 # 🔌 Client WebSocket Endpoint
@@ -25,30 +35,65 @@ DHAN_CLIENT_ID = CONFIG["auth"]["client_id"]
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     clients.add(ws)
-    print("Client connected:", len(clients))
+    client_subscriptions[ws] = None
+
+    print("✅ Client connected:", len(clients))
 
     try:
         while True:
-            await ws.receive_text()  # keep connection alive
+            msg = await ws.receive_text()
+            data = json.loads(msg)
+
+            msg_type = data.get("type")
+            security_id = str(data.get("securityId"))
+
+            # 🔁 SWITCH (replace previous)
+            if msg_type == "switch":
+                client_subscriptions[ws] = security_id
+
+                await subscription_queue.put({
+                    "action": "subscribe",
+                    "securityId": security_id
+                })
+
+                print(f"🔄 Client switched → {security_id}")
+
+            # ➕ SUBSCRIBE (additive, optional)
+            elif msg_type == "subscribe":
+                client_subscriptions[ws] = security_id
+
+                await subscription_queue.put({
+                    "action": "subscribe",
+                    "securityId": security_id
+                })
+
+                print(f"📡 Client subscribed → {security_id}")
+
     except WebSocketDisconnect:
         clients.discard(ws)
-        print("Client disconnected:", len(clients))
+        client_subscriptions.pop(ws, None)
+        print("❌ Client disconnected:", len(clients))
 
 
 # -----------------------------
-# 📡 Broadcast
+# 📡 Broadcast (filtered)
 # -----------------------------
 async def broadcast(data):
     dead = []
 
+    sid = str(data.get("securityId"))
+
     for client in clients:
         try:
-            await client.send_json(data)
+            # 🎯 send only relevant ticks
+            if client_subscriptions.get(client) == sid:
+                await client.send_json(data)
         except:
             dead.append(client)
 
     for d in dead:
         clients.discard(d)
+        client_subscriptions.pop(d, None)
 
 
 # -----------------------------
@@ -61,8 +106,9 @@ async def dhan_feed():
         try:
             async with websockets.connect(uri) as ws:
 
-                print("Connected to Dhan")
+                print("🚀 Connected to Dhan")
 
+                # 🔐 Authenticate
                 await ws.send(json.dumps({
                     "action": "authenticate",
                     "params": {
@@ -71,20 +117,36 @@ async def dhan_feed():
                     }
                 }))
 
-                await ws.send(json.dumps({
-                    "action": "subscribe",
-                    "params": {
-                        "mode": "ltp",
-                        "instruments": [
-                            {
-                                "exchangeSegment": "NSE_EQ",
-                                "securityId": "1333"
-                            }
-                        ]
-                    }
-                }))
+                subscribed = set()
 
                 while True:
+
+                    # 🔄 Handle new subscriptions
+                    try:
+                        while True:
+                            sub = subscription_queue.get_nowait()
+                            sid = sub["securityId"]
+
+                            if sid not in subscribed:
+                                subscribed.add(sid)
+
+                                await ws.send(json.dumps({
+                                    "action": "subscribe",
+                                    "params": {
+                                        "mode": "ltp",
+                                        "instruments": [{
+                                            "exchangeSegment": "NSE_EQ",
+                                            "securityId": sid
+                                        }]
+                                    }
+                                }))
+
+                                print("📡 Subscribed to:", sid)
+
+                    except asyncio.QueueEmpty:
+                        pass
+
+                    # 📥 Receive tick
                     msg = await ws.recv()
 
                     try:
@@ -92,16 +154,12 @@ async def dhan_feed():
                     except:
                         continue
 
-                    # 🔍 Filter valid ticks
+                    # 🎯 Filter valid ticks
                     if isinstance(data, dict) and "ltp" in data:
-                        await broadcast({
-                            "ltp": data.get("ltp"),
-                            "timestamp": data.get("timestamp"),
-                            "securityId": data.get("securityId")
-                        })
+                        await broadcast(data)
 
         except Exception as e:
-            print("Reconnect due to error:", e)
+            print("⚠️ Reconnect due to error:", e)
             await asyncio.sleep(2)
 
 

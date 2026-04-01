@@ -2446,6 +2446,7 @@ function renderOptionStructure(index) {
 function renderGammaExplosionRanking(data) {
 
     charts.gammaExplosionRanking.clear()
+    console.log("Gamma Explosion RAW:", data, Array.isArray(data))
 
     if (!data || data.length === 0) {
         console.warn("No gamma explosion data")
@@ -3994,6 +3995,8 @@ async function loadStocksFromAPI() {
 let isRealtimeInitialized = false;
 function switchTab(tabId, el) {
     console.log('Active Stock:' + activeStock)
+    RealtimeRenderer.stopQuotePolling()
+
     // remove active from all tabs
     document.querySelectorAll(".tab").forEach(tab => {
         tab.classList.remove("active")
@@ -4019,7 +4022,7 @@ function switchTab(tabId, el) {
         loadStocksFromAPI()
         RealtimeRenderer.initSearch(universe)
 
-        isRealtimeInitialized = true;
+        isRealtimeInitialized = false;
     }
 }
 

@@ -471,7 +471,7 @@ def gamma_explosion():
             })
 
             for d in cursor:
-                symbol = d.get("_id")
+                symbol = str(d.get("_id")) if d.get("_id") else None
 
                 if not symbol:
                     continue
@@ -514,7 +514,7 @@ def gamma_explosion():
                     vol_spread = iv - hv
 
                 results.append({
-                    "symbol": symbol,
+                    "symbol": str(symbol),
                     "distance": distance,
                     "distance_pct": distance_pct,
                     "gamma_explosion_score": gamma_explosion_score,
@@ -568,7 +568,7 @@ def gamma_explosion():
                     if distance is not None:
                         gamma_explosion_score = abs(gex_gradient) * abs(distance) / spot
                     else:
-                        gamma_explosion_score = abs(gex_gradient) / spot
+                        gamma_explosion_score = None
 
                     # --- VOL CONTEXT ---
                     vol_spread = None
@@ -621,6 +621,7 @@ def gamma_explosion():
 
         # 🔥 LIMIT (important for dashboard latency)
         results = results[:50]
+
 
         return jsonify(results)
 

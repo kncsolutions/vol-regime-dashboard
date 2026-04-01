@@ -564,28 +564,53 @@
 
         </div>
         <div class="panel chart-panel">
-    <h3>Chart</h3>
+            <h3>Chart</h3>
 
-    <!-- 🔥 Wrapper (CRITICAL) -->
-    <div id="chart-wrapper" style="position: relative; width: 100%; height: 500px;">
+            <!-- 🔥 Wrapper (CRITICAL) -->
+            <div id="chart-wrapper" style="position: relative; width: 100%; height: 300px;">
 
-        <!-- 📊 Chart -->
-        <div id="realtimeChartContainer" style="width: 100%; height: 100%;"></div>
+                <!-- 📊 Chart -->
+                <div id="realtimeChartContainer" style="width: 100%; height: 100%;"></div>
 
-        <!-- 🔥 GEX Overlay -->
-        <div id="gex-overlay" style="
+                <!-- 🔥 GEX Overlay -->
+                <div id="gex-overlay" style="
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
             pointer-events: none;
-        ">GEX Ladder</div>
+        ">GEX Ladder
+                </div>
+
+            </div>
+
+        </div>
+        <!-- ✅ NEW PANEL -->
+        <h3>Spatial GEX Gradient (Gamma Cliffs)</h3>
+        <div id="gex-gradient-panel"
+             style="height:150px; margin-top:8px;">
+
+        </div>
+        <h3>Vega Ladder</h3>
+        <div id="vega-ladder-panel"
+             style="height:150px; margin-top:8px;"></div>
+
+        <h3>Vega Skew</h3>
+        <div id="vega-skew-panel"
+             style="height:150px; margin-top:8px;"></div>
+
+        <h3>IV Smile</h3>
+        <div id="iv-smile-panel"
+             style="height:450px; margin-top:8px;"></div>
+
+         <h3>IV Structure</h3>
+        <div id="iv-structure-panel"
+             style="height:450px; margin-top:8px;"></div>
+
 
     </div>
-</div>
 
-    </div>
     <h3>Market Instability Map</h3>
 
     <div id="instabilityMap" style="height:600px"></div>

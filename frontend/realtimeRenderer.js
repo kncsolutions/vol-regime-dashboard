@@ -17,6 +17,7 @@ const RealtimeRenderer = (() => {
     let gammaFlipLine = null;  // ✅ ADD THIS
     let lastGammaLadder = null;
     let currentSpot = null;
+    let quoteInterval = null
 
 
     document.querySelectorAll(".tf-selector button").forEach(btn => {
@@ -30,6 +31,7 @@ const RealtimeRenderer = (() => {
 
         // update state
         activeTimeframe = btn.dataset.tf
+         stopQuotePolling()
         console.log("TF changed:", activeTimeframe)
 
         // reload current stock
@@ -69,7 +71,10 @@ function initRealtimeChart(containerId) {
         LightweightCharts.CandlestickSeries,
         {
             upColor: "#00ff9c",
-            downColor: "#ff4d4f"
+            downColor: "#ff4d4f",
+            // 🔥 TURN THESE OFF
+            lastValueVisible: false,
+            priceLineVisible: false
         }
     )
 
@@ -77,7 +82,7 @@ function initRealtimeChart(containerId) {
     ltpLine = candleSeries.createPriceLine({
     price: 0,
     color: "#FFD700",
-    lineWidth: 2,
+    lineWidth: 1,
     lineStyle: LightweightCharts.LineStyle.Dashed,
     axisLabelVisible: true,
     title: "LTP"
@@ -95,6 +100,14 @@ function initRealtimeChart(containerId) {
 
     });
 }
+function updateLTPLine(ltp) {
+
+    if (!ltpLine || !ltp) return
+
+    ltpLine.applyOptions({
+        price: ltp
+    })
+}
 function drawGammaFlip(flipPrice) {
     if (!candleSeries || !flipPrice) return;
 
@@ -111,6 +124,9 @@ function drawGammaFlip(flipPrice) {
         axisLabelVisible: true,
         title: "Gamma Flip"
     });
+    initGEXGradientChart();
+    initVegaChart();
+    initVegaSkewChart();
 }
 function getGammaRegime(spot, flip) {
     return spot > flip ? "LONG" : "SHORT";
@@ -216,19 +232,22 @@ function startWebSocket() {
     ws = new WebSocket("ws://localhost:8001/ws");
 
     ws.onopen = () => {
-        console.log("✅ WS connected");
-    };
+                console.log("✅ WS connected");
 
-    // ✅ PUT YOUR CODE HERE
+                if (currentSecurityId) {
+                    subscribe(currentSecurityId);
+                } else {
+                    console.warn("⚠️ No securityId yet");
+                }
+            };
+
     ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        console.log("Tick:", data.securityId, "Active:", currentSecurityId);
-        console.log("WS DATA:\n", JSON.stringify(data, null, 2));
-         // 🔥 filter by active stock
-        if (String(data.securityId) !== String(currentSecurityId)) return;
 
-        // 🔥 filter by active stock
-        if (data.securityId !== currentSecurityId) return;
+        console.log("Tick:", data.securityId, "Active:", currentSecurityId);
+
+        // ✅ Keep ONLY ONE check (you had duplicate)
+        //if (String(data.securityId) !== String(currentSecurityId)) return;
 
         handleTick(data);
     };
@@ -290,6 +309,21 @@ function handleTick(tick) {
     currentCandle.close = price
 
     updateCandle(currentCandle)
+}
+function subscribe(securityId) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    ws.send(JSON.stringify({
+        type: "switch",
+        securityId: String(securityId)
+    }));
+
+    console.log("📡 Subscribed to:", securityId);
+}
+function changeSecurity(securityId) {
+    currentSecurityId = String(securityId);
+
+    subscribe(currentSecurityId);
 }
 
 function updateLTPLine(price) {
@@ -357,6 +391,7 @@ function renderUniverseUI(stocks) {
         const selected = input.value
 
         if (!stockMap[selected]) return
+        stopQuotePolling()
 
         setActiveStock(selected)
     }
@@ -404,7 +439,7 @@ function drawGEXLadder(gammaLadder) {
     gammaLadder.forEach(d => {
 
         // 🔥 filter near price
-        if (Math.abs(d.strike - spot) > 50) return;
+        if (Math.abs(d.strike - spot)/spot > 0.20) return;
 
         const y = candleSeries.priceToCoordinate(d.strike);
 
@@ -485,6 +520,7 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
     });
 
     try {
+        changeSecurity(security_id);
         console.log("📡 Loading:", symbol, activeTimeframe);
 
         const [histRes, ocRes] = await Promise.all([
@@ -501,9 +537,9 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
             console.log("hist data fetched");
 
             if (activeTimeframe === "1d") {
-                renderChart(historical.data, activeTimeframe);
+                renderChart(historical.data, activeTimeframe, security_id,  symbol);
             } else {
-                renderChart(historical, activeTimeframe);
+                renderChart(historical, activeTimeframe, security_id,  symbol);
             }
         }
 //         const quote = await quoteRes.json();
@@ -548,20 +584,37 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
 
         // 🔥 Process only if we have valid OC
         if (ocToUse) {
-    const result = processOptionChain(ocToUse);
+                const result = processOptionChain(ocToUse);
 
-    const flip = computeGammaFlip(result.gammaLadder);
+                const flip = computeGammaFlip(result.gammaLadder);
 
-    lastGammaLadder = result.gammaLadder;
-//    lastGammaLadder = result.gammaLadder;
+                lastGammaLadder = result.gammaLadder;
+            //    lastGammaLadder = result.gammaLadder;
 
-    updateGEXTitle(result.gammaLadder);
+                updateGEXTitle(result.gammaLadder);
+                lastGEXGradient = result.gexGradient;
+                const ivData = extractIVData(ocToUse);
+                console.log('ivdata', ivData.data)
+//                const { gradient, curvature } = computeIVStructure(ivData.data);
 
-    // 🔥 DELAY DRAWING
-    requestAnimationFrame(() => {
-        drawGEXLadder(result.gammaLadder);
-        drawGammaFlip(flip);
-    });
+
+
+
+
+                // 🔥 DELAY DRAWING
+                requestAnimationFrame(() => {
+                    drawGEXLadder(result.gammaLadder);
+                    drawGammaFlip(flip);
+                    renderGEXGradientEChart(result.gexGradient);
+                    renderVegaLadder(result.vegaLadder);
+                    renderVegaSkew(result.vegaSkew);
+                    plotIVChart("iv-smile-panel", ivData);
+                    plotIVStructure(
+                          "iv-structure-panel",
+                          ivData.data,
+                          ivData.spot
+                        );
+                });
 
     const regime = getGammaRegime(currentSpot, flip);
 
@@ -571,7 +624,7 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
 
         // ----------------------------
         resetRealtimeState();
-        //startWebSocket();
+//        startWebSocket();
 
     } catch (e) {
         console.error("❌ loadStock error:", e);
@@ -624,7 +677,7 @@ function toChartDate(ts) {
     return new Date(ts).toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
-function renderChart(data, tf) {
+function renderChart(data, tf, security_id, symbol) {
 
     const isDaily = tf === "1d"
 
@@ -668,8 +721,109 @@ function renderChart(data, tf) {
     currentSpot = spot;
 
     console.log("📍 Spot (from chart):", spot);
+    // 🔥 START POLLING HERE
+    startQuotePolling({
+        security_id: security_id,
+        symbol: symbol,
+        candles,
+        interval: 5000  // every 3 sec
+    })
 }
+/////////////////////////////////
+///LTP Quote/////
+/////////////////////////////
+function extractSpotFromQuote(response) {
 
+    const quote = extractQuoteNode(response)
+
+    return quote?.last_price || null
+}
+function extractQuoteNode(response) {
+
+    let node = response
+
+    // 🔥 unwrap nested "data" layers dynamically
+    while (node && node.data) {
+        node = node.data
+    }
+
+    // now node = { NSE_EQ: {...} } OR { IDX_I: {...} }
+
+    if (!node) return null
+
+    const exchangeKey = Object.keys(node)[0]
+    const exchangeData = node[exchangeKey]
+
+    const securityKey = Object.keys(exchangeData)[0]
+
+    return exchangeData[securityKey]
+}
+function resolveSpot(newSpot, candles) {
+
+    if (newSpot && newSpot > 0) {
+        currentSpot = newSpot
+        console.log("📍 Spot (from quote):", currentSpot)
+        return
+    }
+
+    if (currentSpot) {
+        console.log("📍 Spot (fallback: previous):", currentSpot)
+        return
+    }
+
+    const lastCandle = candles?.[candles.length - 1]
+    const fallbackSpot = lastCandle?.close
+
+    if (fallbackSpot) {
+        currentSpot = fallbackSpot
+        console.log("📍 Spot (from chart):", currentSpot)
+    }
+}
+function startQuotePolling({security_id, symbol, candles, interval = 5000 }) {
+
+    // clear existing loop
+    if (quoteInterval) {
+        clearInterval(quoteInterval)
+    }
+    console.log('Quotesmbol:', symbol)
+
+    quoteInterval = setInterval(async () => {
+        try {
+        const params = new URLSearchParams({
+                underlying_security: symbol
+            });
+            const res = await authFetch(
+                `${API}/quote/${security_id}?${params}`
+            )
+
+            const data = await res.json()
+            console.log("QuoteData:", data)
+
+            const newSpot = extractSpotFromQuote(data)
+
+            resolveSpot(newSpot, candles)
+            // 🔥 THIS drives the right-side label
+            updateLTPLine(newSpot)
+
+            // 🔥 OPTIONAL: trigger updates
+            // updateIVChart(currentSpot)
+            // updateGammaChart(currentSpot)
+
+        } catch (err) {
+            console.error("Quote fetch error:", err)
+
+            // fallback on failure
+            resolveSpot(null, candles)
+        }
+
+    }, interval)
+}
+function stopQuotePolling() {
+    if (quoteInterval) {
+        clearInterval(quoteInterval)
+        quoteInterval = null
+    }
+}
     //--------------------------------------------------
     // 📐 RESIZE
     //--------------------------------------------------
@@ -685,7 +839,7 @@ function renderChart(data, tf) {
     //--------------------------------------------------
     // 🧹 CLEANUP
     //--------------------------------------------------
-    function destroy() {
+function destroy() {
         stopRealtime()
 
         if (chart) {
@@ -696,6 +850,444 @@ function renderChart(data, tf) {
 
         window.removeEventListener("resize", resizeChart)
     }
+
+ //----------------------------------
+ //----Other Charts----------
+ //-------------------------------
+ let gexGradientChart = null;
+
+function initGEXGradientChart() {
+    const el = document.getElementById("gex-gradient-panel");
+    if (!el) return;
+
+    if (gexGradientChart) {
+        gexGradientChart.dispose();
+    }
+
+    gexGradientChart = echarts.init(el);
+
+    const option = {
+        backgroundColor: "#111",
+        grid: {
+            left: 50,
+            right: 20,
+            top: 10,
+            bottom: 30
+        },
+        xAxis: {
+            type: "value",
+            name: "Gradient",
+            axisLine: { lineStyle: { color: "#888" } },
+            splitLine: { lineStyle: { color: "#222" } }
+        },
+        yAxis: {
+            type: "value",
+            name: "Strike",
+            axisLine: { lineStyle: { color: "#888" } },
+            splitLine: { lineStyle: { color: "#222" } }
+        },
+        series: [{
+            type: "bar",
+            data: []
+        }]
+    };
+
+    gexGradientChart.setOption(option);
+}
+function renderGEXGradientEChart(gexGradient) {
+
+    if (!gexGradientChart || !gexGradient) return;
+
+    const spot = currentSpot;
+
+    // 🔹 Step 1: filter
+    const range = currentSpot * 0.20; // 3%
+
+        const filtered = gexGradient.filter(v =>
+            !spot || Math.abs(v.strike - spot) <= range
+        );
+
+
+    // 🔹 Step 2: sort
+    filtered.sort((a, b) => a.strike - b.strike);
+
+    // 🔹 Step 3: x-axis (strikes)
+    const strikes = filtered.map(g => g.strike);
+
+    // ✅ Step 4: REPLACE gradients with styled data
+    const data = filtered.map(g => ({
+        value: g.gradient,
+        itemStyle: {
+            color: g.gradient > 0 ? "#00bfff" : "#ff0066"
+        }
+    }));
+
+    // 🔹 Step 5: render
+    gexGradientChart.setOption({
+        xAxis: {
+            type: "category",
+            data: strikes
+        },
+        yAxis: {
+            type: "value"
+        },
+        series: [{
+            type: "line",
+            data: data,
+            smooth: true,
+            areaStyle: { opacity: 0.2 },
+            lineStyle: { width: 2 },
+
+            markLine: {
+                data: [{ yAxis: 0 }],
+                lineStyle: {
+                    color: "#FFD700"
+                }
+            },
+        }],
+        tooltip: {
+                trigger: "axis",
+                axisPointer: {
+                    type: "cross"
+                },
+                backgroundColor: "#222",
+                borderColor: "#555",
+                textStyle: {
+                    color: "#fff"
+                },
+                formatter: function (params) {
+                    const p = params[0];  // single series
+
+                    const strike = p.axisValue;
+                    const gradient = p.data.value;
+
+                    return `
+                        <b>Strike:</b> ${strike}<br/>
+                        <b>Gradient:</b> ${gradient.toFixed(2)}
+                    `;
+                }
+            },
+           grid: {
+          left: 40,
+          right: 20,
+          top: 20,
+          bottom: 80   // 👈 increase this
+        },
+        dataZoom: [{type: "inside"}, {type: "slider",height: 30,
+    bottom: 10 } ]
+    });
+}
+let vegaChart = null;
+
+function initVegaChart() {
+    const el = document.getElementById("vega-ladder-panel");
+    if (!el) return;
+
+    if (vegaChart) {
+        vegaChart.dispose();
+    }
+
+    vegaChart = echarts.init(el);
+
+    vegaChart.setOption({
+        backgroundColor: "#111",
+        grid: { left: 50, right: 20, top: 10, bottom: 30 },
+
+        tooltip: {
+            trigger: "axis",
+            axisPointer: { type: "cross" },
+            backgroundColor: "#222",
+            textStyle: { color: "#fff" }
+        },
+
+        xAxis: {
+            type: "category",
+            name: "Strike",
+            axisLine: { lineStyle: { color: "#888" } },
+            axisLabel: { color: "#AAA" }
+        },
+
+        yAxis: {
+            type: "value",
+            name: "Vega",
+            axisLine: { lineStyle: { color: "#888" } },
+            splitLine: { lineStyle: { color: "#222" } }
+        },
+
+        series: [{
+            type: "bar",
+            data: []
+        }]
+    });
+}
+function renderVegaLadder(vegaLadder) {
+
+    if (!vegaChart || !vegaLadder) return;
+
+    const spot = currentSpot;
+
+    // 🔥 focus near spot
+    const range = currentSpot * 0.20; // 3%
+
+        const filtered = vegaLadder.filter(v =>
+            !spot || Math.abs(v.strike - spot) <= range
+        );
+
+    // 🔥 sort by strike
+    filtered.sort((a, b) => a.strike - b.strike);
+
+    const strikes = filtered.map(v => v.strike);
+
+    const data = filtered.map(v => ({
+        value: v.vega,
+        itemStyle: {
+            color: v.vega > 0 ? "#ffa500" : "#00ffcc"
+        }
+    }));
+
+    vegaChart.setOption({
+        xAxis: {
+            data: strikes
+        },
+        series: [{
+            data: data
+        }],
+        grid: {
+          left: 40,
+          right: 20,
+          top: 20,
+          bottom: 80   // 👈 increase this
+        },
+        dataZoom: [{type: "inside"}, {type: "slider",height: 30,
+    bottom: 10 } ]
+    });
+}
+
+let vegaSkewChart = null;
+
+function initVegaSkewChart() {
+    const el = document.getElementById("vega-skew-panel");
+    if (!el) return;
+
+    if (vegaSkewChart) {
+        vegaSkewChart.dispose();
+    }
+
+    vegaSkewChart = echarts.init(el);
+
+    vegaSkewChart.setOption({
+        backgroundColor: "#111",
+        grid: { left: 50, right: 20, top: 10, bottom: 30 },
+
+        tooltip: {
+            trigger: "axis",
+            axisPointer: { type: "cross" },
+            backgroundColor: "#222",
+            textStyle: { color: "#fff" }
+        },
+
+        xAxis: {
+            type: "category",
+            name: "Strike",
+            axisLine: { lineStyle: { color: "#888" } },
+            axisLabel: { color: "#AAA" }
+        },
+
+        yAxis: {
+            type: "value",
+            name: "Vega",
+            axisLine: { lineStyle: { color: "#888" } },
+            splitLine: { lineStyle: { color: "#222" } }
+        },
+
+        series: [{
+            type: "line",
+            data: []
+        }]
+    });
+}
+function renderVegaSkew(vegaSkew) {
+
+    if (!vegaSkewChart || !vegaSkew) return;
+
+    const spot = currentSpot;
+
+    // 🔥 focus near spot
+    const range = currentSpot * 0.08; // 3%
+
+        const filtered = vegaSkew.filter(v =>
+            !spot || Math.abs(v.strike - spot) <= range
+        );
+
+    // 🔥 sort by strike
+    filtered.sort((a, b) => a.strike - b.strike);
+
+    const strikes = filtered.map(v => v.strike);
+
+    const data = filtered.map(v => ({
+        value: v.vega,
+        itemStyle: {
+            color: v.vega > 0 ? "#ffa500" : "#00ffcc"
+        }
+    }));
+
+    vegaSkewChart.setOption({
+        xAxis: {
+            data: strikes
+        },
+        series: [{
+            data: data
+        }],
+        grid: {
+          left: 40,
+          right: 20,
+          top: 20,
+          bottom: 80   // 👈 increase this
+        },
+        dataZoom: [{type: "inside"}, {type: "slider",height: 30,
+    bottom: 10 } ]
+    });
+}
+function plotIVChart(containerId, ivPayload) {
+
+    const { data, spot } = ivPayload
+
+    if (!Array.isArray(data) || data.length === 0) {
+        console.warn("No IV data")
+        return
+    }
+
+    const chart = echarts.init(document.getElementById(containerId))
+
+    const strikes = data.map(d => d.strike)
+    const ivValues = data.map(d => d.iv)
+
+    const option = {
+        grid: { left: 50, right: 20, top: 20, bottom: 70 },
+
+        tooltip: {
+            trigger: 'axis',
+            formatter: p => {
+                const d = p[0]
+                return `Strike: ${d.axisValue}<br>IV: ${d.data.toFixed(2)}`
+            }
+        },
+
+        xAxis: {
+            type: 'category',
+            data: strikes,
+            name: 'Strike'
+        },
+
+        yAxis: {
+            type: 'value',
+            name: 'IV'
+        },
+
+        dataZoom: [
+            { type: 'inside' },
+            { type: 'slider', height: 25, bottom: 10 }
+        ],
+
+        series: [
+            {
+                name: 'IV (OTM)',
+                type: 'line',
+                data: ivValues,
+                smooth: true,
+                showSymbol: false,
+
+                // 🔥 Highlight ATM (spot)
+                markLine: {
+                    symbol: 'none',
+                    data: [
+                        { xAxis: spot }
+                    ],
+                    label: {
+                        formatter: 'Spot'
+                    }
+                }
+            }
+        ]
+    }
+
+    chart.setOption(option)
+}
+function plotIVStructure(containerId, ivData, spot) {
+
+    if (!Array.isArray(ivData) || ivData.length < 3) {
+        console.warn("Not enough IV data")
+        return
+    }
+
+    const chart = echarts.init(document.getElementById(containerId))
+
+    const { gradient, curvature } = computeIVStructure(ivData)
+
+    const strikes = ivData.map(d => d.strike)
+
+    const option = {
+        grid: { left: 60, right: 60, top: 20, bottom: 70 },
+
+        tooltip: { trigger: 'axis' },
+
+        legend: {
+            data: ['IV Gradient', 'IV Curvature']
+        },
+
+        xAxis: {
+            type: 'category',
+            data: strikes,
+            name: 'Strike'
+        },
+
+        yAxis: [
+            {
+                type: 'value',
+                name: '∂IV/∂K',
+                position: 'left'
+            },
+            {
+                type: 'value',
+                name: '∂²IV/∂K²',
+                position: 'right'
+            }
+        ],
+
+        dataZoom: [
+            { type: 'inside' },
+            { type: 'slider', height: 25, bottom: 20 }
+        ],
+
+        series: [
+            {
+                name: 'IV Gradient',
+                type: 'line',
+                data: gradient,
+                smooth: true,
+                yAxisIndex: 0
+            },
+            {
+                name: 'IV Curvature',
+                type: 'line',
+                data: curvature,
+                smooth: true,
+                yAxisIndex: 1
+            },
+            {
+                // 🔥 optional: mark spot
+                type: 'line',
+                markLine: {
+                    symbol: 'none',
+                    data: [{ xAxis: spot }],
+                    label: { formatter: 'Spot' }
+                }
+            }
+        ]
+    }
+
+    chart.setOption(option)
+}
 //---------------------------------
 //Helper Functions------------
 //---------------------------------
@@ -755,7 +1347,7 @@ function extractOC(optionChain) {
     function computeNetGEX(gammaLadder) {
     return gammaLadder.reduce((sum, r) => sum + r.gex, 0);
 }
-    function computeVegaLadder(rows) {
+function computeVegaLadder(rows) {
     return rows.map(r => {
         const ce_v = r.ce_vega * r.ce_oi;
         const pe_v = r.pe_vega * r.pe_oi;
@@ -766,7 +1358,18 @@ function extractOC(optionChain) {
         };
     });
 }
-    function computeGEXGradient(gammaLadder) {
+function computeVegaSkew(rows) {
+    return rows.map(r => {
+        const net_oi = r.ce_oi - r.pe_oi
+        const v_skew = ((r.ce_vega + r.pe_vega)/2 ) * net_oi
+
+        return {
+            strike: r.strike,
+            vega: v_skew
+        };
+    });
+}
+function computeGEXGradient(gammaLadder) {
     const gradient = [];
 
     for (let i = 1; i < gammaLadder.length; i++) {
@@ -784,24 +1387,103 @@ function extractOC(optionChain) {
 
     return gradient;
 }
-    function processOptionChain(optionChain) {
+function processOptionChain(optionChain) {
 
-    const oc = extractOC(optionChain);
+            const oc = extractOC(optionChain);
 
-    const rows = normalizeOC(oc);
+            const rows = normalizeOC(oc);
 
-    const gammaLadder = computeGammaLadder(rows);
-    const netGEX = computeNetGEX(gammaLadder);
-    const vegaLadder = computeVegaLadder(rows);
-    const gexGradient = computeGEXGradient(gammaLadder);
+            const gammaLadder = computeGammaLadder(rows);
+            const netGEX = computeNetGEX(gammaLadder);
+            const vegaLadder = computeVegaLadder(rows);
+            const vegaSkew = computeVegaSkew(rows);
+            const gexGradient = computeGEXGradient(gammaLadder);
 
-    return {
-        rows,
-        gammaLadder,
-        netGEX,
-        vegaLadder,
-        gexGradient
-    };
+            return {
+                rows,
+                gammaLadder,
+                netGEX,
+                vegaLadder,
+                vegaSkew,
+                gexGradient
+            };
+}
+function extractIVData(apiResponse) {
+
+    const oc = apiResponse?.data?.data?.oc
+    const spot = apiResponse?.data?.data?.last_price
+
+    if (!oc || !spot) {
+        console.error("Invalid data structure", apiResponse)
+        return []
+    }
+
+    const result = []
+
+    for (const strikeKey in oc) {
+
+        const strike = parseFloat(strikeKey)
+        const ce = oc[strikeKey].ce
+        const pe = oc[strikeKey].pe
+
+        const callIV = ce?.implied_volatility || 0
+        const putIV = pe?.implied_volatility || 0
+
+        // 🔥 YOUR LOGIC HERE
+        let iv = strike >= spot ? callIV : putIV
+
+        // fallback if chosen side is bad
+        if (iv === 0) {
+            iv = callIV || putIV
+        }
+
+        // skip garbage
+        if (!iv || iv <= 0) continue
+
+        result.push({
+            strike,
+            iv
+        })
+    }
+
+    // sort strikes
+    result.sort((a, b) => a.strike - b.strike)
+
+    return { data: result, spot }
+}
+function computeIVStructure(ivData) {
+
+    const gradient = []
+    const curvature = []
+
+    for (let i = 0; i < ivData.length; i++) {
+
+        // Edge handling
+        if (i === 0 || i === ivData.length - 1) {
+            gradient.push(null)
+            curvature.push(null)
+            continue
+        }
+
+        const prev = ivData[i - 1]
+        const curr = ivData[i]
+        const next = ivData[i + 1]
+
+        const dK = next.strike - prev.strike
+
+        // 🔹 First derivative (central diff)
+        const grad = (next.iv - prev.iv) / dK
+
+        // 🔹 Second derivative (curvature)
+        const curv =
+            (next.iv - 2 * curr.iv + prev.iv) /
+            Math.pow(next.strike - curr.strike, 2)
+
+        gradient.push(grad)
+        curvature.push(curv)
+    }
+
+    return { gradient, curvature }
 }
 
     //--------------------------------------------------
@@ -816,6 +1498,7 @@ function extractOC(optionChain) {
         startRealtime,
         startRealtimeFake,
         stopRealtime,
+        stopQuotePolling,
         destroy
     }
 
