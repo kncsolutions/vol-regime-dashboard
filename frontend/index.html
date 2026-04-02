@@ -567,7 +567,7 @@
             <h3>Chart</h3>
 
             <!-- 🔥 Wrapper (CRITICAL) -->
-            <div id="chart-wrapper" style="position: relative; width: 100%; height: 300px;">
+            <div id="chart-wrapper" style="position: relative; width: 100%; height: 250px;">
 
                 <!-- 📊 Chart -->
                 <div id="realtimeChartContainer" style="width: 100%; height: 100%;"></div>
@@ -589,24 +589,29 @@
         <!-- ✅ NEW PANEL -->
         <h3>Spatial GEX Gradient (Gamma Cliffs)</h3>
         <div id="gex-gradient-panel"
-             style="height:150px; margin-top:8px;">
+             style="height:200px; margin-top:8px;">
 
         </div>
         <h3>Vega Ladder</h3>
         <div id="vega-ladder-panel"
-             style="height:150px; margin-top:8px;"></div>
+             style="height:200px; margin-top:8px;"></div>
 
         <h3>Vega Skew</h3>
         <div id="vega-skew-panel"
-             style="height:150px; margin-top:8px;"></div>
+             style="height:200px; margin-top:8px;"></div>
 
         <h3>IV Smile</h3>
         <div id="iv-smile-panel"
              style="height:450px; margin-top:8px;"></div>
 
-         <h3>IV Structure</h3>
+        <h3>IV Structure</h3>
         <div id="iv-structure-panel"
              style="height:450px; margin-top:8px;"></div>
+        <h3>OI Structure</h3>
+        <div id="oi-panel" style="height:300px;"></div>
+        <div id="oi-change-panel" style="height:300px;"></div>
+
+
 
 
     </div>
@@ -616,10 +621,19 @@
     <div id="instabilityMap" style="height:600px"></div>
 
     <h3>Stocks Near Gamma Flip ((+/-)2%)</h3>
+    <button onclick="downloadflipZoneCSV(window.flipzoneData)">
+        Download Flipzone Data
+    </button>
 
     <div id="flipZoneChart" style="height:400px"></div>
+    <button onclick="downloadGammaExplosionCSV(window.gammaExplosionData)">
+        Download Gamma Explosion CSV
+    </button>
 
     <div id="gammaExplosionRanking" style="height:400px;width:100%"></div>
+    <button onclick="downloadConvexityRadarCSV(window.convexityRadarData)">
+        Download Convexity Radar CSV
+    </button>
 
     <div id="convexityRadar" style="height:650px;width:100%"></div>
 

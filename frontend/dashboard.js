@@ -2254,6 +2254,8 @@ async function renderFlipZoneChart() {
     let stocks = data.map(x => x.symbol)
 
     let distances = data.map(x => x.distance_pct)
+    // 👉 attach download button trigger
+    window.flipzoneData = data
 
     charts.flipzone.setOption({
 
@@ -2452,6 +2454,7 @@ function renderGammaExplosionRanking(data) {
         console.warn("No gamma explosion data")
         return
     }
+    window.gammaExplosionData = data;
 
     // sort by explosion score
     data.sort((a, b) => b.gamma_explosion_score - a.gamma_explosion_score)
@@ -3833,6 +3836,7 @@ function renderConvexityRadar(data) {
         }
 
     })
+    window.convexityRadarData = data;
 
     charts.convexityRadar.setOption({
 
@@ -4162,6 +4166,94 @@ function reloadAll() {
     renderInstabilityMap()
     loadConvexityRadar()
 }
+
+window.downloadflipZoneCSV = function(data) {
+    if (!data || data.length === 0) return;
+
+    let csv = "Symbol,Distance (%)\n";
+
+    data.forEach(row => {
+        csv += `${row.symbol},${row.distance_pct}\n`;
+    });
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "flipzone_data.csv";
+    link.click();
+
+    URL.revokeObjectURL(url);
+}
+window.downloadConvexityRadarCSV = function(data) {
+    if (!data || data.length === 0) return;
+
+    let csv = "Symbol,Gamma Instability,Vanna Pressure,Dealer Flow,Flip Distance,Shock Speed\n";
+
+    data.forEach(d => {
+        csv += [
+            d.symbol,
+            d.gamma_instability,
+            d.vanna_pressure,
+            d.dealer_flow,
+            d.flip_distance,
+            d.shock_speed
+        ].join(",") + "\n";
+    });
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `convexity_radar_${Date.now()}.csv`;
+    link.click();
+
+    URL.revokeObjectURL(url);
+};
+window.downloadGammaExplosionCSV = function(data) {
+    if (!data || data.length === 0) return;
+
+    // 👉 sort exactly like chart (important for consistency)
+    let sorted = [...data].sort(
+        (a, b) => b.gamma_explosion_score - a.gamma_explosion_score
+    );
+
+    let csv = "Rank,Symbol,Distance,Distance (%),Raw Score,Log Score\n";
+
+    sorted.forEach((d, i) => {
+
+        let raw = d.gamma_explosion_score || 0;
+
+        let logScore = (raw > 0) ? Math.log10(1 + raw) : 0;
+
+        let distance = (d.distance != null) ? d.distance : "NA";
+
+        let pct = (d.distance_pct != null)
+            ? (d.distance_pct * 100).toFixed(2)
+            : "NA";
+
+        csv += [
+            i + 1,
+            d.symbol,
+            distance,
+            pct,
+            raw,
+            logScore.toFixed(4)
+        ].join(",") + "\n";
+    });
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `gamma_explosion_${Date.now()}.csv`;
+    link.click();
+
+    URL.revokeObjectURL(url);
+};
 
 document.addEventListener("DOMContentLoaded", function () {
 

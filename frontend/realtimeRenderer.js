@@ -31,7 +31,8 @@ const RealtimeRenderer = (() => {
 
         // update state
         activeTimeframe = btn.dataset.tf
-         stopQuotePolling()
+        setTimeframe(activeTimeframe)
+        stopQuotePolling()
         console.log("TF changed:", activeTimeframe)
 
         // reload current stock
@@ -127,6 +128,8 @@ function drawGammaFlip(flipPrice) {
     initGEXGradientChart();
     initVegaChart();
     initVegaSkewChart();
+    initOIChart();
+    initOIChangeChart();
 }
 function getGammaRegime(spot, flip) {
     return spot > flip ? "LONG" : "SHORT";
@@ -279,13 +282,26 @@ function getBucket(ts) {
 function handleTick(tick) {
     if (!tick.ltp || !tick.timestamp) return
 
+    // 🔥 SPECIAL CASE: DAILY TF
+    if (activeTimeframe === "1d") {
+        currentCandle.close = tick.ltp
+        currentCandle.high = Math.max(currentCandle.high, tick.ltp)
+        currentCandle.low = Math.min(currentCandle.low, tick.ltp)
+
+        updateCandle(currentCandle)
+        return
+    }
+
+    // ⬇️ existing logic
     const ts = Math.floor(tick.timestamp)
     const price = tick.ltp
-
     const bucket = getBucket(ts)
 
-    // 🔹 NEW CANDLE
     if (currentBucket !== bucket) {
+        if (currentCandle) {
+            onCandleClose(currentCandle);
+        }
+
         currentBucket = bucket
 
         currentCandle = {
@@ -295,20 +311,32 @@ function handleTick(tick) {
             low: price,
             close: price
         }
-        if (tick.ltp) {
-            updateLTPLine(tick.ltp);
-        }
+        console.log({
+                tf: activeTimeframe,
+                currentBucket,
+                tickTime: Math.floor(tick.timestamp),
+            });
+        if (!currentCandle) return;
 
         updateCandle(currentCandle)
         return
     }
 
-    // 🔹 UPDATE EXISTING
     currentCandle.high = Math.max(currentCandle.high, price)
     currentCandle.low = Math.min(currentCandle.low, price)
     currentCandle.close = price
 
     updateCandle(currentCandle)
+}
+function onCandleClose(candle) {
+    // ❌ skip 1m timeframe
+    if (activeTimeframe === "1m") return;
+
+    console.log("🕒 Candle closed:", candle, "TF:", activeTimeframe);
+    console.log("🕒 Candle closed:", candle);
+
+    // 🔥 run heavy logic here
+    updateOptionChain(activeStock, currentSecurityId);
 }
 function subscribe(securityId) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -398,6 +426,7 @@ function renderUniverseUI(stocks) {
 }
 
 function setActiveStock(symbol) {
+    stopSafeUpdateLoop(); // 🔥 prevent leak
 
 
     const input = document.getElementById("stockSelectchart")
@@ -423,6 +452,11 @@ function setActiveStock(symbol) {
         security_id,
         lotSize
     })
+     startSafeUpdateLoop({
+        symbol,
+        security_id,
+        interval: 3 * 60 * 1000 // N minutes
+    })
 }
 function drawGEXLadder(gammaLadder) {
 
@@ -432,6 +466,7 @@ function drawGEXLadder(gammaLadder) {
     overlay.innerHTML = "";
 
     const spot = currentSpot;
+    console.log("drawGEXLadder spot:", currentSpot);
     if (!spot) return;
 
     const maxGEX = Math.max(...gammaLadder.map(d => Math.abs(d.gex))) || 1;
@@ -503,6 +538,127 @@ function isValidOC(optionChain) {
 
     return oc && Object.keys(oc).length > 0;
 }
+///////////////////////////////////
+////update every n periods
+//////////////////////////////////
+async function updateOptionChain(symbol, security_id) {
+
+    const params = new URLSearchParams({
+        underlying_security: symbol,
+        tf: activeTimeframe
+    });
+
+    const request = ++requestId;
+
+    try {
+        const res = await authFetch(
+            `${API}/option-chain/${security_id}?${params}`
+        );
+
+        const optionChain = await res.json();
+
+        // 🔥 stale protection
+        if (request !== requestId) return;
+
+        let ocToUse = isValidOC(optionChain)
+            ? (lastValidOC = optionChain)
+            : lastValidOC;
+
+        if (!ocToUse) return;
+
+        const result = processOptionChain(ocToUse);
+        const flip = computeGammaFlip(result.gammaLadder);
+
+        lastGammaLadder = result.gammaLadder;
+        lastGEXGradient = result.gexGradient;
+
+        const ivData = extractIVData(ocToUse);
+
+        requestAnimationFrame(() => {
+            drawGEXLadder(result.gammaLadder);
+            drawGammaFlip(flip);
+            renderGEXGradientEChart(result.gexGradient);
+            renderVegaLadder(result.vegaLadder);
+            renderVegaSkew(result.vegaSkew);
+            plotIVChart("iv-smile-panel", ivData);
+            plotIVStructure("iv-structure-panel", ivData.data, ivData.spot);
+            renderOI(result.rows);
+            renderOIChange(result.rows);
+        });
+
+    } catch (e) {
+        console.error("OC update error:", e);
+    }
+}
+let updateLoopRunning = false;
+
+async function startSafeUpdateLoop({ symbol, security_id, interval = 60000 }) {
+
+    if (updateLoopRunning) return;
+    updateLoopRunning = true;
+
+    while (updateLoopRunning) {
+
+        const start = Date.now();
+
+        await updateOptionChain(symbol, security_id);
+
+        const elapsed = Date.now() - start;
+        const delay = Math.max(0, interval - elapsed);
+
+        await new Promise(res => setTimeout(res, delay));
+    }
+}
+function stopSafeUpdateLoop() {
+    updateLoopRunning = false;
+}
+function setTimeframe(tf) {
+    const map = {
+        "1m": 60,
+        "5m": 300,
+        "15m": 900,
+        "1h": 3600
+    }
+
+    timeframeSec = map[tf] || 60
+}
+async function pollCandle() {
+
+
+    try {
+    const res = await authFetch(
+        `${API}/historical/${security_id}?${params}`
+    ) }catch (e) {
+        console.error("❌ loadStock error:", e);
+    }
+
+    const data = await res.json()
+
+    handleTick({
+        ltp: data.price,
+        timestamp: Date.now() / 1000
+    })
+}
+let candleInterval = null;
+
+function startCandlePolling(interval = 2000) {
+
+    // prevent duplicates
+    if (candleInterval) return;
+
+    candleInterval = setInterval(() => {
+        pollCandle();
+    }, interval);
+
+    console.log("▶️ Candle polling started");
+}
+function stopCandlePolling() {
+    if (candleInterval) {
+        clearInterval(candleInterval);
+        candleInterval = null;
+        console.log("⏹ Candle polling stopped");
+    }
+}
 let requestId = 0;
 let lastValidOC = null;
 
@@ -527,7 +683,6 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
             authFetch(`${API}/historical/${security_id}?${params}`),
             authFetch(`${API}/option-chain/${security_id}?${params}`)
         ]);
-//,authFetch(`${API}/quote/${security_id}?${params}`
         const historical = await histRes.json();
          // ----------------------------
         // ✅ ALWAYS RENDER CHART
@@ -542,22 +697,12 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
                 renderChart(historical, activeTimeframe, security_id,  symbol);
             }
         }
-//         const quote = await quoteRes.json();
-
-//        const spot =
-//            quote?.data?.[security_id]?.last_price;
-//
-//        console.log("📍 Spot:", quoteRes);
 
         const optionChain = await ocRes.json();
 
 
-        // 🔥 Ignore stale responses
-        if (currentRequest !== requestId) {
-            console.warn("⚠️ Stale response ignored");
-            return;
-        }
-        console.log('here')
+
+
 
         // ----------------------------
         // ✅ OPTION CHAIN HANDLING
@@ -602,7 +747,8 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
 
 
                 // 🔥 DELAY DRAWING
-                requestAnimationFrame(() => {
+                setTimeout(() => {
+
                     drawGEXLadder(result.gammaLadder);
                     drawGammaFlip(flip);
                     renderGEXGradientEChart(result.gexGradient);
@@ -610,15 +756,23 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
                     renderVegaSkew(result.vegaSkew);
                     plotIVChart("iv-smile-panel", ivData);
                     plotIVStructure(
-                          "iv-structure-panel",
-                          ivData.data,
-                          ivData.spot
-                        );
-                });
+                        "iv-structure-panel",
+                        ivData.data,
+                        ivData.spot
+                    );
+                    renderOI(result.rows);
+                    renderOIChange(result.rows);
+
+                }, 0);
 
     const regime = getGammaRegime(currentSpot, flip);
 
     console.log("Regime:", regime);
+     // 🔥 Ignore stale responses
+        if (currentRequest !== requestId) {
+            console.warn("⚠️ Stale response ignored");
+            return;
+        }
 }
 
 
@@ -708,6 +862,8 @@ function renderChart(data, tf, security_id, symbol) {
     candleSeries.setData(unique)
     // 🔥 force chart to recalc scale
     chart.timeScale().fitContent();
+    // 🔥 ADD THIS
+    chart.timeScale().getVisibleRange();
 
     // 🔥 force intraday rendering
     chart.applyOptions({
@@ -717,6 +873,8 @@ function renderChart(data, tf, security_id, symbol) {
         }
     })
     const lastCandle = unique[unique.length - 1];
+    currentCandle = { ...lastCandle };   // 🔥 REQUIRED
+    currentBucket = lastCandle.time;
     const spot = lastCandle?.close;
     currentSpot = spot;
 
@@ -726,8 +884,9 @@ function renderChart(data, tf, security_id, symbol) {
         security_id: security_id,
         symbol: symbol,
         candles,
-        interval: 5000  // every 3 sec
+        interval: 2000  // every 3 sec
     })
+
 }
 /////////////////////////////////
 ///LTP Quote/////
@@ -804,6 +963,10 @@ function startQuotePolling({security_id, symbol, candles, interval = 5000 }) {
             resolveSpot(newSpot, candles)
             // 🔥 THIS drives the right-side label
             updateLTPLine(newSpot)
+            handleTick({
+                ltp: newSpot,
+                timestamp: Date.now() / 1000
+            });
 
             // 🔥 OPTIONAL: trigger updates
             // updateIVChart(currentSpot)
@@ -1288,6 +1451,122 @@ function plotIVStructure(containerId, ivData, spot) {
 
     chart.setOption(option)
 }
+let oiChart = null;
+
+function initOIChart() {
+    const el = document.getElementById("oi-panel");
+    if (!el) return;
+
+    if (oiChart) oiChart.dispose();
+
+    oiChart = echarts.init(el);
+
+    oiChart.setOption({
+        backgroundColor: "#111",
+        tooltip: { trigger: "axis" },
+        legend: { data: ["Call OI", "Put OI"] },
+
+        xAxis: {
+            type: "category",
+            name: "Strike"
+        },
+
+        yAxis: {
+            type: "value",
+            name: "OI"
+        },
+
+        series: [
+            { name: "Call OI", type: "bar", data: [] },
+            { name: "Put OI", type: "bar", data: [] }
+        ]
+    });
+}
+function renderOI(rows) {
+    if (!oiChart || !rows) return;
+
+    const spot = currentSpot;
+    const range = spot * 0.20;
+
+    const filtered = rows.filter(r =>
+        !spot || Math.abs(r.strike - spot) <= range
+    );
+
+    const strikes = filtered.map(r => r.strike);
+
+    const callOI = filtered.map(r => r.ce_oi);
+    const putOI = filtered.map(r => r.pe_oi);
+
+    oiChart.setOption({
+        xAxis: { data: strikes },
+        series: [
+            { name: "Call OI", data: callOI },
+            { name: "Put OI", data: putOI }
+        ],
+        dataZoom: [
+            { type: 'inside' },
+            { type: 'slider', height: 25, bottom: 20 }
+        ],
+    });
+}
+let oiChangeChart = null;
+
+function initOIChangeChart() {
+    const el = document.getElementById("oi-change-panel");
+    if (!el) return;
+
+    if (oiChangeChart) oiChangeChart.dispose();
+
+    oiChangeChart = echarts.init(el);
+
+    oiChangeChart.setOption({
+        backgroundColor: "#111",
+        tooltip: { trigger: "axis" },
+        legend: { data: ["Call del-OI", "Put del-OI"] },
+
+        xAxis: {
+            type: "category",
+            name: "Strike"
+        },
+
+        yAxis: {
+            type: "value",
+            name: "del-OI"
+        },
+
+        series: [
+            { name: "Call del-OI", type: "bar", data: [] },
+            { name: "Put del-OI", type: "bar", data: [] }
+        ]
+    });
+}
+function renderOIChange(rows) {
+    if (!oiChangeChart || !rows) return;
+
+    const spot = currentSpot;
+    const range = spot * 0.20;
+
+    const filtered = rows.filter(r =>
+        !spot || Math.abs(r.strike - spot) <= range
+    );
+
+    const strikes = filtered.map(r => r.strike);
+
+    const callChange = filtered.map(r => r.ce_oi_change);
+    const putChange = filtered.map(r => r.pe_oi_change);
+
+    oiChangeChart.setOption({
+        xAxis: { data: strikes },
+        series: [
+            { name: "Call del-OI", data: callChange },
+            { name: "Put del-OI", data: putChange }
+        ],
+        dataZoom: [
+            { type: 'inside' },
+            { type: 'slider', height: 25, bottom: 20 }
+        ],
+    });
+}
 //---------------------------------
 //Helper Functions------------
 //---------------------------------
@@ -1305,7 +1584,7 @@ function computeGammaFlip(gammaLadder) {
 function extractOC(optionChain) {
     return optionChain?.data?.data?.oc || {};
 }
-    function normalizeOC(oc) {
+function normalizeOC(oc) {
     const rows = [];
 
     Object.entries(oc).forEach(([strikeStr, value]) => {
@@ -1317,18 +1596,22 @@ function extractOC(optionChain) {
         rows.push({
             strike,
 
+            // EXISTING
             ce_gamma: Number(ce.greeks?.gamma || 0),
             pe_gamma: Number(pe.greeks?.gamma || 0),
 
             ce_oi: Number(ce.oi || 0),
             pe_oi: Number(pe.oi || 0),
 
+            // 🔥 ADD THIS
+            ce_oi_change: Number(ce.oi_change || ce.change_in_oi || ce.oi - ce.previous_oi || 0),
+            pe_oi_change: Number(pe.oi_change || pe.change_in_oi || pe.oi - pe.previous_oi || 0),
+
             ce_vega: Number(ce.greeks?.vega || 0),
             pe_vega: Number(pe.greeks?.vega || 0)
         });
     });
 
-    // sort by strike
     rows.sort((a, b) => a.strike - b.strike);
 
     return rows;
