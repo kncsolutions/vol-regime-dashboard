@@ -1,3 +1,5 @@
+import { FeatureEngine } from "./FeatureEngine.js";
+import { RRPModel } from "./RRPModel.js";
 const RealtimeRenderer = (() => {
 
     let chart = null
@@ -10,14 +12,53 @@ const RealtimeRenderer = (() => {
     let watchlist = new Map()  // selected stocks
     let activeTimeframe = "1d"
 
-    let ws = null
+    let ws = null;
     let currentSecurityId = null;
+    let currentSecurityName = null;
     let ltpLine = null;
     let isLoading = false;
     let gammaFlipLine = null;  // ✅ ADD THIS
     let lastGammaLadder = null;
     let currentSpot = null;
-    let quoteInterval = null
+    let quoteInterval = null;
+
+    const marketBuffer = {
+    size: 1000,
+    index: 0,
+    filled: false,
+
+    ltp: new Array(1000),
+    bid: new Array(1000),
+    ask: new Array(1000),
+    microprice: new Array(1000),
+    timestamp: new Array(1000),
+    };
+    marketBuffer.imbalance = new Array(1000);
+
+    let alphaChart = null;
+    let microChart = null;
+    let imbalanceChart = null;
+    let lbaChart = null;
+    let rrpChart = null;
+
+    // =========================
+    // RRP ENGINE INSTANCE
+    // =========================
+    // =========================
+    // GLOBAL MARKET STATE
+    // =========================
+    const marketState = {
+        netGEX: 0,
+        gexStd: 1,
+        adv: 1e7,
+        gexHistory: []
+    };
+    const featureEngine = new FeatureEngine();
+    const rrpModel = new RRPModel();
+
+    const rrpSeries = [];
+
+
 
 
     document.querySelectorAll(".tf-selector button").forEach(btn => {
@@ -45,6 +86,35 @@ const RealtimeRenderer = (() => {
     //--------------------------------------------------
     // 🧱 INIT CHART
     //--------------------------------------------------
+function resetSocketCharts() {
+
+    console.log("🧹 Resetting socket charts...");
+
+    // 1. Reset circular buffer
+    marketBuffer.index = 0;
+    marketBuffer.filled = false;
+
+    marketBuffer.ltp.fill(undefined);
+    marketBuffer.bid.fill(undefined);
+    marketBuffer.ask.fill(undefined);
+    marketBuffer.microprice.fill(undefined);
+    marketBuffer.imbalance.fill(undefined);
+    marketBuffer.timestamp.fill(undefined);
+
+    // 2. Reset RRP
+    rrpSeries.length = 0;
+
+    // 3. Clear charts
+    microChart?.clear();
+    imbalanceChart?.clear();
+    lbaChart?.clear();
+    alphaChart?.clear();
+    rrpChart?.clear();
+
+    // 4. Reset candle aggregation
+    currentCandle = null;
+    currentBucket = null;
+}
 function initRealtimeChart(containerId) {
 
 
@@ -100,6 +170,11 @@ function initRealtimeChart(containerId) {
             });
 
     });
+    initMicroChart();
+    initImbalanceChart();
+    initLBAChart();
+     initAlphaChart();   // 🔥 ADD THIS
+     initRRPChart();   // ✅ ADD THIS
 }
 function updateLTPLine(ltp) {
 
@@ -130,6 +205,7 @@ function drawGammaFlip(flipPrice) {
     initVegaSkewChart();
     initOIChart();
     initOIChangeChart();
+
 }
 function getGammaRegime(spot, flip) {
     return spot > flip ? "LONG" : "SHORT";
@@ -227,8 +303,118 @@ function computeAmplification(netGEX) {
             }, interval)
 }
 //Web Socket
+//let ws = null;
+function updateMarketBuffer(data) {
+    const i = marketBuffer.index;
 
+    // 🔥 EXTRACT LEVEL 1
+    const level1 = data.depth?.[0];
+
+    if (!level1) return;
+
+    const bid = level1.bid_price;
+    const ask = level1.ask_price;
+    const bidQty = level1.bid_qty || 1;
+    const askQty = level1.ask_qty || 1;
+
+    // 🛡️ guard
+    if (!bid || !ask || isNaN(bid) || isNaN(ask)) return;
+
+    // 🔹 Microprice
+    const micro =
+        (ask * bidQty + bid * askQty) / (bidQty + askQty);
+
+    // 🔹 Imbalance
+    const imbalance =
+        (bidQty - askQty) / (bidQty + askQty);
+
+    marketBuffer.ltp[i] = data.ltp;
+    marketBuffer.bid[i] = bid;
+    marketBuffer.ask[i] = ask;
+    marketBuffer.microprice[i] = micro;
+    marketBuffer.imbalance[i] = imbalance;
+    marketBuffer.timestamp[i] = data.ltt;
+
+    marketBuffer.index++;
+
+    if (marketBuffer.index >= marketBuffer.size) {
+        marketBuffer.index = 0;
+        marketBuffer.filled = true;
+    }
+}
+function getMicropriceTrend(lookback = 10) {
+    const size = marketBuffer.size;
+    const i = marketBuffer.index;
+
+    if (!marketBuffer.filled && i < lookback) return 0;
+
+    const curr = marketBuffer.microprice[(i - 1 + size) % size];
+    const prev = marketBuffer.microprice[(i - 1 - lookback + size) % size];
+
+    return curr - prev;
+}
+function getImbalanceSignal(window = 20) {
+    const size = marketBuffer.size;
+    const i = marketBuffer.index;
+
+    let sum = 0;
+    let count = 0;
+
+    for (let j = 0; j < window; j++) {
+        const idx = (i - 1 - j + size) % size;
+
+        const val = marketBuffer.imbalance[idx];
+        if (val === undefined) break;
+
+        sum += val;
+        count++;
+    }
+
+    return count > 0 ? sum / count : 0;
+}
+function getAlphaSignal() {
+    const trend = getMicropriceTrend(10);
+    const imbalance = getImbalanceSignal(20);
+
+    // normalize
+    const trendNorm = trend / (marketBuffer.ltp[marketBuffer.index - 1] || 1);
+
+    const signal = 0.6 * trendNorm + 0.4 * imbalance;
+
+    return {
+        trend,
+        imbalance,
+        signal
+    };
+}
+function getMicropriceVelocity() {
+    return getMicropriceTrend(5) - getMicropriceTrend(15);
+}
+function getBuffer() {
+    if (!marketBuffer.filled) {
+        return {
+            ltp: marketBuffer.ltp.slice(0, marketBuffer.index),
+            bid: marketBuffer.bid.slice(0, marketBuffer.index),
+            ask: marketBuffer.ask.slice(0, marketBuffer.index),
+            microprice: marketBuffer.microprice.slice(0, marketBuffer.index),
+        };
+    }
+
+    // 🔁 reorder circular buffer
+    const i = marketBuffer.index;
+
+    return {
+        ltp: [...marketBuffer.ltp.slice(i), ...marketBuffer.ltp.slice(0, i)],
+        bid: [...marketBuffer.bid.slice(i), ...marketBuffer.bid.slice(0, i)],
+        ask: [...marketBuffer.ask.slice(i), ...marketBuffer.ask.slice(0, i)],
+        microprice: [
+            ...marketBuffer.microprice.slice(i),
+            ...marketBuffer.microprice.slice(0, i)
+        ],
+    };
+}
 function startWebSocket() {
+    if(ws) return;
 
     stopWebSocket(); // prevent duplicates
 
@@ -238,7 +424,7 @@ function startWebSocket() {
                 console.log("✅ WS connected");
 
                 if (currentSecurityId) {
-                    subscribe(currentSecurityId);
+                    subscribe(currentSecurityId, currentSecurityName);
                 } else {
                     console.warn("⚠️ No securityId yet");
                 }
@@ -246,13 +432,44 @@ function startWebSocket() {
 
     ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
+        console.log(data)
 
         console.log("Tick:", data.securityId, "Active:", currentSecurityId);
+        console.log("MARKET STATE:", marketState);
 
         // ✅ Keep ONLY ONE check (you had duplicate)
-        //if (String(data.securityId) !== String(currentSecurityId)) return;
+        if (String(data.securityId) !== String(currentSecurityId)) return;
+        updateMarketBuffer(data);
 
         handleTick(data);
+        const features = featureEngine.update(data);
+    if (!features) return;
+
+    // =========================
+    // INJECT MARKET STATE
+    // =========================
+    features.netGEX = marketState.netGEX;
+    features.adv    = marketState.adv;
+    features.gexStd = marketState.gexStd;
+
+    // =========================
+    // SAFETY CHECK (IMPORTANT)
+    // =========================
+    if (!features.netGEX || !features.gexStd) {
+        return;
+    }
+
+    const rrp = rrpModel.compute(features);
+    if (!rrp) return;
+
+    rrpSeries.push({
+        time: data.timestamp || Date.now(),
+        value: rrp.final
+    });
+
+    if (rrpSeries.length > 300) rrpSeries.shift();
+
+    renderRRP(rrpSeries);
     };
 
     ws.onclose = () => {
@@ -338,20 +555,22 @@ function onCandleClose(candle) {
     // 🔥 run heavy logic here
     updateOptionChain(activeStock, currentSecurityId);
 }
-function subscribe(securityId) {
+function subscribe(securityId, symbol) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
     ws.send(JSON.stringify({
         type: "switch",
-        securityId: String(securityId)
+        securityId: String(securityId),
+        securityName: symbol
     }));
 
     console.log("📡 Subscribed to:", securityId);
 }
-function changeSecurity(securityId) {
+function changeSecurity(securityId, symbol) {
     currentSecurityId = String(securityId);
+    currentSecurityName = symbol;
 
-    subscribe(currentSecurityId);
+    subscribe(currentSecurityId, currentSecurityName);
 }
 
 function updateLTPLine(price) {
@@ -427,6 +646,9 @@ function renderUniverseUI(stocks) {
 
 function setActiveStock(symbol) {
     stopSafeUpdateLoop(); // 🔥 prevent leak
+    stopQuotePolling();
+    stopAlphaLoop();          // ✅ ADD
+    resetSocketCharts();      // ✅ ADD
 
 
     const input = document.getElementById("stockSelectchart")
@@ -442,6 +664,7 @@ function setActiveStock(symbol) {
     const security_id = stock.security_id
     // 🔥 ADD THIS
     currentSecurityId = String(security_id);
+    currentSecurityName = symbol
     const lotSize = stock.lotSize
 
     console.log("Selected:", symbol, security_id, lotSize)
@@ -466,7 +689,7 @@ function drawGEXLadder(gammaLadder) {
     overlay.innerHTML = "";
 
     const spot = currentSpot;
-    console.log("drawGEXLadder spot:", currentSpot);
+    //console.log("drawGEXLadder spot:", currentSpot);
     if (!spot) return;
 
     const maxGEX = Math.max(...gammaLadder.map(d => Math.abs(d.gex))) || 1;
@@ -541,6 +764,7 @@ function isValidOC(optionChain) {
 ///////////////////////////////////
 ////update every n periods
 //////////////////////////////////
+let lastGEXGradient = null;
 async function updateOptionChain(symbol, security_id) {
 
     const params = new URLSearchParams({
@@ -662,6 +886,29 @@ function stopCandlePolling() {
 let requestId = 0;
 let lastValidOC = null;
 
+// =========================
+// UPDATE MARKET STATE
+// =========================
+function updateMarketState(result) {
+
+    if (!result) return;
+
+    // Net GEX
+    marketState.netGEX = result.netGEX || 0;
+
+    // Maintain rolling history
+    marketState.gexHistory.push(marketState.netGEX);
+    if (marketState.gexHistory.length > 200) {
+        marketState.gexHistory.shift();
+    }
+
+    // Rolling STD
+    marketState.gexStd = computeRollingStd(marketState.gexHistory);
+
+    // ADV (daily liquidity proxy)
+    marketState.adv = result.adv || 1e7;
+}
+
 async function loadStockforCharting({ symbol, security_id, lotSize }) {
     if (isLoading) {
         console.warn("⏳ Skipping duplicate load");
@@ -676,7 +923,7 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
     });
 
     try {
-        changeSecurity(security_id);
+        changeSecurity(security_id, symbol);
         console.log("📡 Loading:", symbol, activeTimeframe);
 
         const [histRes, ocRes] = await Promise.all([
@@ -697,6 +944,8 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
                 renderChart(historical, activeTimeframe, security_id,  symbol);
             }
         }
+        startWebSocket();
+        startAlphaLoop();
 
         const optionChain = await ocRes.json();
 
@@ -713,9 +962,9 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
             lastValidOC = optionChain;
             ocToUse = optionChain;
 
-            console.log("OC KEYS:",
-                Object.keys(optionChain?.data?.data?.oc || {})
-            );
+            //console.log("OC KEYS:",
+             //   Object.keys(optionChain?.data?.data?.oc || {})
+            //);
 
         } else {
             console.warn("⚠️ Invalid OC, using last valid");
@@ -739,7 +988,8 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
                 updateGEXTitle(result.gammaLadder);
                 lastGEXGradient = result.gexGradient;
                 const ivData = extractIVData(ocToUse);
-                console.log('ivdata', ivData.data)
+                updateMarketState(result);
+                //console.log('ivdata', ivData.data)
 //                const { gradient, curvature } = computeIVStructure(ivData.data);
 
 
@@ -777,12 +1027,24 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
 
 
         // ----------------------------
-        resetRealtimeState();
 //        startWebSocket();
+        resetRealtimeState();
+
 
     } catch (e) {
         console.error("❌ loadStock error:", e);
     }
+}
+function computeRollingStd(arr) {
+    if (!arr || arr.length < 10) return 1;
+
+    const mean =
+        arr.reduce((a, b) => a + b, 0) / arr.length;
+
+    const variance =
+        arr.reduce((a, b) => a + (b - mean) ** 2, 0) / arr.length;
+
+    return Math.sqrt(variance) || 1;
 }
 
 function resetRealtimeState() {
@@ -878,7 +1140,7 @@ function renderChart(data, tf, security_id, symbol) {
     const spot = lastCandle?.close;
     currentSpot = spot;
 
-    console.log("📍 Spot (from chart):", spot);
+    //console.log("📍 Spot (from chart):", spot);
     // 🔥 START POLLING HERE
     startQuotePolling({
         security_id: security_id,
@@ -921,12 +1183,12 @@ function resolveSpot(newSpot, candles) {
 
     if (newSpot && newSpot > 0) {
         currentSpot = newSpot
-        console.log("📍 Spot (from quote):", currentSpot)
+        //console.log("📍 Spot (from quote):", currentSpot)
         return
     }
 
     if (currentSpot) {
-        console.log("📍 Spot (fallback: previous):", currentSpot)
+        //console.log("📍 Spot (fallback: previous):", currentSpot)
         return
     }
 
@@ -935,7 +1197,7 @@ function resolveSpot(newSpot, candles) {
 
     if (fallbackSpot) {
         currentSpot = fallbackSpot
-        console.log("📍 Spot (from chart):", currentSpot)
+        //console.log("📍 Spot (from chart):", currentSpot)
     }
 }
 function startQuotePolling({security_id, symbol, candles, interval = 5000 }) {
@@ -944,7 +1206,7 @@ function startQuotePolling({security_id, symbol, candles, interval = 5000 }) {
     if (quoteInterval) {
         clearInterval(quoteInterval)
     }
-    console.log('Quotesmbol:', symbol)
+    //console.log('Quote symbol:', symbol)
 
     quoteInterval = setInterval(async () => {
         try {
@@ -956,7 +1218,7 @@ function startQuotePolling({security_id, symbol, candles, interval = 5000 }) {
             )
 
             const data = await res.json()
-            console.log("QuoteData:", data)
+            //console.log("QuoteData:", data)
 
             const newSpot = extractSpotFromQuote(data)
 
@@ -1672,24 +1934,73 @@ function computeGEXGradient(gammaLadder) {
 }
 function processOptionChain(optionChain) {
 
-            const oc = extractOC(optionChain);
+    // ----------------------------
+    // 1. Extract + Validate
+    // ----------------------------
+    const oc = extractOC(optionChain);
 
-            const rows = normalizeOC(oc);
+    if (!oc || Object.keys(oc).length === 0) {
+        return { valid: false };
+    }
 
-            const gammaLadder = computeGammaLadder(rows);
-            const netGEX = computeNetGEX(gammaLadder);
-            const vegaLadder = computeVegaLadder(rows);
-            const vegaSkew = computeVegaSkew(rows);
-            const gexGradient = computeGEXGradient(gammaLadder);
+    const rows = normalizeOC(oc);
 
-            return {
-                rows,
-                gammaLadder,
-                netGEX,
-                vegaLadder,
-                vegaSkew,
-                gexGradient
-            };
+    if (!rows || rows.length === 0) {
+        return { valid: false };
+    }
+
+    // ----------------------------
+    // 2. Core Calculations
+    // ----------------------------
+    const gammaLadder = computeGammaLadder(rows);
+    const netGEX = computeNetGEX(gammaLadder);
+    const vegaLadder = computeVegaLadder(rows);
+    const vegaSkew = computeVegaSkew(rows);
+    const gexGradient = computeGEXGradient(gammaLadder);
+
+    // ----------------------------
+    // 3. ADV (Notional Liquidity Proxy)
+    // ----------------------------
+    let rawADV = 0;
+
+    for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+
+        const oi = (r.ce_oi || 0) + (r.pe_oi || 0);
+        rawADV += oi * r.strike;
+    }
+
+    // normalize by number of strikes
+    let adv = rawADV / rows.length;
+
+    // safety floor (critical)
+    adv = Math.max(adv, 1e6);
+
+    // ----------------------------
+    // 4. Data Quality Score (optional but powerful)
+    // ----------------------------
+    const confidence = Math.min(1, rows.length / 100);
+
+    // ----------------------------
+    // 5. Return Structured Result
+    // ----------------------------
+    return {
+        valid: true,
+
+        // core
+        rows,
+        gammaLadder,
+        netGEX,
+        gexGradient,
+        vegaLadder,
+        vegaSkew,
+
+        // 🔥 critical for RRP
+        adv,
+
+        // 🔥 optional upgrade
+        confidence
+    };
 }
 function extractIVData(apiResponse) {
 
@@ -1768,6 +2079,643 @@ function computeIVStructure(ivData) {
 
     return { gradient, curvature }
 }
+//----------------------------------
+//----Price microstructure charts-
+//-----------------------------------
+function initMicroChart() {
+    const el = document.getElementById("microChart");
+    if (!el) return;
+
+    if (microChart) microChart.dispose();
+
+    microChart = echarts.init(el);
+
+    microChart.setOption({
+        backgroundColor: "#111",
+        tooltip: { trigger: "axis" },
+
+        legend: { data: ["Microprice", "LTP"] },
+
+        xAxis: { type: "category", data: [] },
+        yAxis: { type: "value", scale: true },
+
+        series: [
+            { name: "Microprice", type: "line", data: [], smooth: true },
+            { name: "LTP", type: "line", data: [], smooth: true }
+        ],
+        dataZoom: [
+            { type: 'inside' },
+            { type: 'slider', height: 25, bottom: 30 }
+        ],
+    });
+}
+function initImbalanceChart() {
+    const el = document.getElementById("imbalanceChart");
+    if (!el) return;
+
+    if (imbalanceChart) imbalanceChart.dispose();
+
+    imbalanceChart = echarts.init(el);
+
+    imbalanceChart.setOption({
+        backgroundColor: "#111",
+        tooltip: { trigger: "axis" },
+
+        xAxis: { type: "category", data: [] },
+
+        yAxis: {
+            type: "value",
+            min: -1,
+            max: 1
+        },
+
+        series: [{
+            name: "Imbalance",
+            type: "line",
+            data: [],
+            smooth: true
+        }],
+        dataZoom: [
+            { type: 'inside' },
+            { type: 'slider', height: 25, bottom: 30 }
+        ],
+    });
+}
+function initLBAChart() {
+    const el = document.getElementById("lbaChart");
+    if (!el) return;
+
+    if (lbaChart) lbaChart.dispose();
+
+    lbaChart = echarts.init(el);
+
+    lbaChart.setOption({
+        backgroundColor: "#111",
+        tooltip: { trigger: "axis" },
+
+        legend: { data: ["LTP", "Bid", "Ask"] },
+
+        xAxis: { type: "category", data: [] },
+        yAxis: { type: "value", scale: true },
+
+        series: [
+            { name: "LTP", type: "line", data: [], smooth: true },
+            { name: "Bid", type: "line", data: [], smooth: true },
+            { name: "Ask", type: "line", data: [], smooth: true }
+        ],
+        dataZoom: [
+            { type: 'inside' },
+            { type: 'slider', height: 25, bottom: 30 }
+        ],
+    });
+}
+function initRRPChart() {
+    const el = document.getElementById("rrpChart");
+    if (!el) return;
+
+    if (rrpChart) rrpChart.dispose();
+
+    rrpChart = echarts.init(el);
+
+    rrpChart.setOption({
+        backgroundColor: "#111",
+
+        grid: {
+            left: 40,
+            right: 20,
+            top: 20,
+            bottom: 80   // ✅ REQUIRED
+        },
+
+        tooltip: { trigger: "axis" },
+
+        xAxis: {
+            type: "category",
+            data: []
+        },
+
+        yAxis: {
+            type: "value",
+            min: 0,
+            max: 1
+        },
+
+        series: [{
+            name: "RRP",
+            type: "line",
+            data: [],
+            smooth: true
+        }],
+
+        dataZoom: [
+            {
+                type: 'inside'
+            },
+            {
+                type: 'slider',
+                height: 25,
+                bottom: 10   // inside grid now
+            }
+        ]
+    });
+}
+function renderRRP(series) {
+    if (!rrpChart) return;
+    if (rrpChart.isDisposed?.()) return;
+    if (!rrpChart._model) return;
+
+    if (!Array.isArray(series) || series.length === 0) return;
+
+    const x = [];
+    const y = [];
+
+    for (let i = 0; i < series.length; i++) {
+        const t = series[i]?.time;
+        const v = series[i]?.value;
+
+        // 🔥 HARD FILTER
+        if (!isFinite(v) || v == null) continue;
+
+        x.push(i);        // OR use time (see below)
+        y.push(v);
+    }
+
+    // 🚨 MUST MATCH
+    if (x.length === 0 || x.length !== y.length) return;
+
+    rrpChart.setOption({
+        xAxis: {
+            type: "category",
+            data: x
+        },
+        yAxis: {
+            type: "value",
+            min: 0,
+            max: 1
+        },
+        // ✅ TOOLTIP (UPGRADED)
+        tooltip: {
+            trigger: "axis",
+            axisPointer: {
+                type: "cross"
+            },
+            backgroundColor: "#222",
+            borderColor: "#555",
+            textStyle: {
+                color: "#fff"
+            },
+            formatter: function (params) {
+                const p = params[0];
+
+                const value = p.data;
+                const idx = p.dataIndex;
+
+                return `
+                    <b>Index:</b> ${idx}<br/>
+                    <b>RRP:</b> ${value.toFixed(4)}
+                `;
+            }
+        },
+        series: [{
+            name: "RRP",
+            type: "line",
+            data: y,
+            smooth: true
+        }],
+        dataZoom: [
+            { type: 'inside' },
+            { type: 'slider', height: 25, bottom: 20 }
+        ],
+    });
+}
+function updateMicroChart() {
+    if (!microChart || microChart.isDisposed?.()) return;
+    if (!microChart._model) return;
+
+    const len = marketBuffer.filled ? marketBuffer.size : marketBuffer.index;
+    if (len < 10) return;
+
+    const x = [];
+    const micro = [];
+    const ltp = [];
+
+    for (let i = 0; i < len; i++) {
+        const m = marketBuffer.microprice[i];
+        const l = marketBuffer.ltp[i];
+
+        // 🔥 STRICT VALIDATION
+        if (
+            m == null || l == null ||
+            !isFinite(m) || !isFinite(l)
+        ) continue;
+
+        x.push(i);
+        micro.push(m);
+        ltp.push(l);
+    }
+
+    // 🚨 HARD CHECK (CRITICAL)
+    if (
+        x.length === 0 ||
+        x.length !== micro.length ||
+        x.length !== ltp.length
+    ) return;
+
+    microChart.setOption({
+        xAxis: {
+            type: "category",
+            data: x
+        },
+        yAxis: {
+            type: "value",
+            scale: true   // 🔥 THIS is the key
+        },
+        series: [
+            {
+                name: "Microprice",
+                type: "line",
+                data: micro,
+                smooth: true
+            },
+            {
+                name: "LTP",
+                type: "line",
+                data: ltp,
+                smooth: true
+            }
+        ],
+
+        // ✅ FIXED TOOLTIP (IMPORTANT)
+        tooltip: {
+            trigger: "axis",
+            axisPointer: { type: "cross" },
+            backgroundColor: "#222",
+            borderColor: "#555",
+            textStyle: { color: "#fff" },
+            formatter: function (params) {
+
+                let microVal = null;
+                let ltpVal = null;
+
+                params.forEach(p => {
+                    if (p.seriesName === "Microprice") microVal = p.data;
+                    if (p.seriesName === "LTP") ltpVal = p.data;
+                });
+
+                return `
+                    <b>Index:</b> ${params[0].dataIndex}<br/>
+                    <b>Micro:</b> ${microVal?.toFixed(2)}<br/>
+                    <b>LTP:</b> ${ltpVal?.toFixed(2)}
+                `;
+            }
+        },
+
+        dataZoom: [
+            { type: 'inside' },
+            { type: 'slider', height: 25, bottom: 20 }
+        ]
+    });
+}
+function updateImbalanceChart() {
+    if (!imbalanceChart) return;
+    if (imbalanceChart.isDisposed?.()) return;
+    if (!imbalanceChart._model) return;
+
+    const len = marketBuffer.filled ? marketBuffer.size : marketBuffer.index;
+    if (len < 10) return;
+
+    const x = [];
+    const data = [];
+
+    for (let i = 0; i < len; i++) {
+        const v = marketBuffer.imbalance[i];
+
+        // 🔥 HARD FILTER (CRITICAL)
+        if (v == null || isNaN(v) || !isFinite(v)) continue;
+
+        x.push(i);
+        data.push(v);
+    }
+
+    // 🚨 MUST match lengths
+    if (data.length === 0 || x.length !== data.length) return;
+
+    imbalanceChart.setOption({
+        xAxis: {
+            type: "category",
+            data: x
+        },
+        yAxis: {
+            type: "value",
+            min: -1,
+            max: 1
+        },
+        // ✅ TOOLTIP (UPGRADED)
+        tooltip: {
+            trigger: "axis",
+            axisPointer: {
+                type: "cross"
+            },
+            backgroundColor: "#222",
+            borderColor: "#555",
+            textStyle: {
+                color: "#fff"
+            },
+            formatter: function (params) {
+                const p = params[0];
+
+                const value = p.data;
+                const idx = p.dataIndex;
+
+                return `
+                    <b>Index:</b> ${idx}<br/>
+                    <b>Imbalance:</b> ${value.toFixed(4)}
+                `;
+            }
+        },
+        series: [{
+            name: "Imbalance",
+            type: "line",
+            data: data,
+            smooth: true
+        }],
+        dataZoom: [
+            { type: 'inside' },
+            { type: 'slider', height: 25, bottom: 20 }
+        ],
+    });
+}
+function updateLBAChart() {
+    if (!lbaChart) return;
+    if (lbaChart.isDisposed?.()) return;
+    if (!lbaChart._model) return;
+
+    const len = marketBuffer.filled ? marketBuffer.size : marketBuffer.index;
+    if (len < 10) return;
+
+    const x = [];
+    const ltp = [];
+    const bid = [];
+    const ask = [];
+
+    for (let i = 0; i < len; i++) {
+        const l = marketBuffer.ltp[i];
+        const b = marketBuffer.bid[i];
+        const a = marketBuffer.ask[i];
+
+        // 🔥 HARD FILTER (ALL SERIES MUST BE VALID TOGETHER)
+        if (
+            l == null || b == null || a == null ||
+            !isFinite(l) || !isFinite(b) || !isFinite(a)
+        ) continue;
+
+        x.push(i);
+        ltp.push(l);
+        bid.push(b);
+        ask.push(a);
+    }
+
+    // 🚨 CRITICAL: ALL SERIES MUST MATCH LENGTH
+    if (
+        x.length === 0 ||
+        x.length !== ltp.length ||
+        x.length !== bid.length ||
+        x.length !== ask.length
+    ) return;
+
+    lbaChart.setOption({
+        xAxis: {
+            type: "category",
+            data: x
+        },
+        yAxis: {
+            type: "value",
+            scale: true
+        },
+         // ✅ LEGEND
+        legend: {
+            data: ["LTP", "Best Bid", "Best Ask"],
+            top: 10,
+            textStyle: {
+                color: "#DDD"
+            }
+        },
+         // ✅ TOOLTIP (VERY IMPORTANT)
+        tooltip: {
+            trigger: "axis",
+            axisPointer: {
+                type: "cross"
+            },
+            backgroundColor: "#222",
+            borderColor: "#555",
+            textStyle: {
+                color: "#fff"
+            },
+            formatter: function (params) {
+                let output = "";
+
+                params.forEach(p => {
+                    const name = p.seriesName;
+                    const value = p.data;
+
+                    output += `<b>${name}:</b> ${value?.toFixed?.(2) ?? value}<br/>`;
+                });
+
+                return output;
+            }
+        },
+        series: [
+            { name: "LTP", type: "line", data: ltp },
+            { name: "Bid", type: "line", data: bid },
+            { name: "Ask", type: "line", data: ask }
+        ],
+        dataZoom: [
+            { type: 'inside' },
+            { type: 'slider', height: 25, bottom: 20 }
+        ],
+    });
+}
+//RRP Model
+function computeRRPFromRealtime(data) {
+
+    const spot = data.spot || data.ltp;
+
+    // =========================
+    // YOUR EXISTING STRUCTURES
+    // =========================
+    const vwap = data.vwap || data.gammaFlip || spot;
+    const netGEX = data.netGEX || 0;
+
+    // -------------------------
+    // VOL (you may already compute this)
+    // -------------------------
+    const sigmaEWMA = data.sigmaEWMA || 1;
+    const sigmaShort = data.sigmaShort || 1;
+    const sigmaLong = data.sigmaLong || 1;
+
+    // -------------------------
+    // MOMENTUM
+    // -------------------------
+    const prevPrice = window.prevPrice || spot;
+    window.prevPrice = spot;
+
+    // -------------------------
+    // GEX NORMALIZATION
+    // -------------------------
+    const adv = data.adv || 1e7;
+    const gexStd = data.gexStd || 1;
+
+    // -------------------------
+    // MICROSTRUCTURE (hook into imbalance)
+    // -------------------------
+    const absorptionSignal =
+        data.imbalance < 0.1 ? 1 : 0;
+
+    // =========================
+    // COMPUTE RRP
+    // =========================
+    return rrpModel.compute({
+        price: spot,
+        center: vwap,
+        sigmaEWMA,
+        netGEX,
+        adv,
+        gexStd,
+        pricePrev: prevPrice,
+        sigmaShort,
+        sigmaLong,
+        microstructureSignal: absorptionSignal
+    });
+}
+//Alpha Chart
+function initAlphaChart() {
+    const el = document.getElementById("alpha-panel");
+    if (!el) return;
+
+    if (alphaChart) alphaChart.dispose();
+
+    alphaChart = echarts.init(el);
+
+    alphaChart.setOption({
+        backgroundColor: "#111",
+        grid: { left: 40, right: 20, top: 20, bottom: 30 },
+
+        tooltip: { trigger: "axis" },
+
+        xAxis: {
+            type: "category",
+            data: []
+        },
+
+        yAxis: {
+            type: "value"
+        },
+
+        series: [{
+            name: "Alpha",
+            type: "line",
+            data: [],
+            smooth: true
+        }],
+        dataZoom: [
+            { type: 'inside' },
+            { type: 'slider', height: 25, bottom: 30 }
+        ],
+    });
+}
+function computeAlphaSeries() {
+    const size = marketBuffer.size;
+    const len = marketBuffer.filled ? size : marketBuffer.index;
+
+    const alpha = [];
+
+    for (let i = 0; i < len; i++) {
+
+        const micro = marketBuffer.microprice[i];
+        const prev = i > 10 ? marketBuffer.microprice[i - 10] : micro;
+
+        const trend = micro - prev;
+        const imbalance = marketBuffer.imbalance[i] || 0;
+
+        // 🔥 SCALE IT
+        const signal = (0.6 * trend + 0.4 * imbalance) * 1000;
+
+        alpha.push(signal);
+    }
+
+    return alpha;
+}
+function updateAlphaChart() {
+    if (!alphaChart) return;
+
+    // 🔥 CRITICAL FIX
+    if (alphaChart.isDisposed?.()) return;
+
+    // 🔥 ADD THIS (VERY IMPORTANT)
+    if (!alphaChart._model) return;
+
+    const len = marketBuffer.filled ? marketBuffer.size : marketBuffer.index;
+    if (len < 20) return;
+
+    const x = Array.from({ length: len }, (_, i) => i);
+    const alphaSeries = computeAlphaSeries();
+
+    alphaChart.setOption({
+        xAxis: { type: "category", data: x },
+        yAxis: { type: "value" },
+        series: [{
+            name: "Alpha",
+            type: "line",
+            data: alphaSeries,
+            smooth: true
+        }],
+         // ✅ TOOLTIP (UPGRADED)
+        tooltip: {
+            trigger: "axis",
+            axisPointer: {
+                type: "cross"
+            },
+            backgroundColor: "#222",
+            borderColor: "#555",
+            textStyle: {
+                color: "#fff"
+            },
+            formatter: function (params) {
+                const p = params[0];
+
+                const value = p.data;
+                const idx = p.dataIndex;
+
+                return `
+                    <b>Index:</b> ${idx}<br/>
+                    <b>Alpha:</b> ${value.toFixed(4)}
+                `;
+            }
+        },
+        dataZoom: [
+            { type: 'inside' },
+            { type: 'slider', height: 25, bottom: 20 }
+        ],
+    });
+}
+let alphaLoop = null;
+
+function startAlphaLoop() {
+    if (alphaLoop) return;
+
+    alphaLoop = setInterval(() => {
+        updateAlphaChart();
+        updateMicroChart();       // 🔥 ADD
+        updateImbalanceChart();   // 🔥 ADD
+        updateLBAChart();
+    }, 100); // 10 FPS
+}
+function stopAlphaLoop() {
+    if (alphaLoop) {
+        clearInterval(alphaLoop);
+        alphaLoop = null;
+    }
+}
 
     //--------------------------------------------------
     // 📦 EXPORT
@@ -1786,3 +2734,4 @@ function computeIVStructure(ivData) {
     }
 
 })()
+window.RealtimeRenderer = RealtimeRenderer;

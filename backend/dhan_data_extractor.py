@@ -323,7 +323,7 @@ class DhanClient:
                 return None
 
             # 🔹 Parse into DataFrame
-            print(response)
+            # print(response)
             return response
 
         except Exception as e:
