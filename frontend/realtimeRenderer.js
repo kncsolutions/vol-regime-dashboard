@@ -1,5 +1,11 @@
 import { FeatureEngine } from "./FeatureEngine.js";
 import { RRPModel } from "./RRPModel.js";
+import { GammaEngine } from "./GammaEngine.js";
+import { GammaEncoder } from "./GammaEncoder.js";
+import { VolEngine } from "./VolEngine.js";
+
+
+
 const RealtimeRenderer = (() => {
 
     let chart = null
@@ -21,6 +27,20 @@ const RealtimeRenderer = (() => {
     let lastGammaLadder = null;
     let currentSpot = null;
     let quoteInterval = null;
+    const volFeatureBuffer = {
+    size: 1000,
+    index: 0,
+    filled: false,
+
+    timestamp: new Array(1000),
+
+    atm_iv: new Array(1000),
+    call_skew: new Array(1000),
+    put_skew: new Array(1000),
+    hv: new Array(1000),
+
+    ltp: new Array(1000) // optional reuse
+};
 
     const marketBuffer = {
     size: 1000,
@@ -28,16 +48,19 @@ const RealtimeRenderer = (() => {
     filled: false,
 
     ltp: new Array(1000),
+    ltq: new Array(1000),
     bid: new Array(1000),
     ask: new Array(1000),
     microprice: new Array(1000),
     timestamp: new Array(1000),
     };
     marketBuffer.imbalance = new Array(1000);
+    marketBuffer.flow = new Array(1000);
 
     let alphaChart = null;
     let microChart = null;
     let imbalanceChart = null;
+    let flowChart = null;
     let lbaChart = null;
     let rrpChart = null;
 
@@ -58,6 +81,28 @@ const RealtimeRenderer = (() => {
 
     const rrpSeries = [];
 
+    const reflexivityState = {
+    I_series: [],
+    price_series:[],
+    dI_series: [],
+    beta_series: [],
+    phi_series: [],
+    window: 20
+        };
+
+    const gammaEngine = new GammaEngine();
+    const gammaEncoder = new GammaEncoder();
+    const gammaBuffer = {
+    size: 30,
+    index: 0,
+    filled: false,
+
+    states: new Array(30),   // raw states
+    vectors: new Array(30),   // encoded vectors (for ML later)
+    timestamps: new Array(30)
+};
+
+const volEngine = new VolEngine();
 
 
 
@@ -172,6 +217,7 @@ function initRealtimeChart(containerId) {
     });
     initMicroChart();
     initImbalanceChart();
+    initFlowChart();
     initLBAChart();
      initAlphaChart();   // 🔥 ADD THIS
      initRRPChart();   // ✅ ADD THIS
@@ -327,12 +373,17 @@ function updateMarketBuffer(data) {
     // 🔹 Imbalance
     const imbalance =
         (bidQty - askQty) / (bidQty + askQty);
+        // 🔹 Flow
+    const flow = imbalance * data.ltq;
+
 
     marketBuffer.ltp[i] = data.ltp;
+    marketBuffer.ltq[i] = data.ltq;
     marketBuffer.bid[i] = bid;
     marketBuffer.ask[i] = ask;
     marketBuffer.microprice[i] = micro;
     marketBuffer.imbalance[i] = imbalance;
+    marketBuffer.flow[i] = flow;
     marketBuffer.timestamp[i] = data.ltt;
 
     marketBuffer.index++;
@@ -413,6 +464,352 @@ function getBuffer() {
         ],
     };
 }
+function getWeightedImbalance(window = 20) {
+
+    let sum = 0;
+    let weightSum = 0;
+
+    for (let j = 0; j < window; j++) {
+        const idx = (marketBuffer.index - 1 - j + marketBuffer.size) % marketBuffer.size;
+
+        const val = marketBuffer.imbalance[idx];
+        if (val === undefined) break;
+
+        const w = Math.exp(-j / 5); // decay
+
+        sum += val * w;
+        weightSum += w;
+    }
+
+    return weightSum > 0 ? sum / weightSum : 0;
+}
+function getNormalizedVelocity(short = 5, long = 15) {
+
+    const shortTrend = getMicropriceTrend(short);
+    const longTrend = getMicropriceTrend(long);
+
+    const price = marketBuffer.ltp[marketBuffer.index - 1] || 1;
+
+    return (shortTrend - longTrend) / price;
+}
+function getFlowSignals() {
+
+    const size = marketBuffer.size;
+    const i = marketBuffer.index;
+
+    if (i < 2 && !marketBuffer.filled) {
+        return null; // 🔥 IMPORTANT
+    }
+
+    const imbalance = getWeightedImbalance(20);
+    const velocity = getNormalizedVelocity(5, 15);
+
+    const priceNow = currentSpot;
+    const pricePrev = marketBuffer.ltp[
+        (i - 2 + size) % size
+    ];
+
+    if (!priceNow || !pricePrev) return null;
+
+    return {
+        imbalance,
+        velocity,
+        priceNow,
+        pricePrev
+    };
+}
+function updateGammaBuffer(timestamp, state, vector = null) {
+
+    const i = gammaBuffer.index;
+
+    gammaBuffer.states[i] = state;
+    gammaBuffer.vectors[i] = vector;
+    gammaBuffer.timestamps[i] = timestamp;
+
+    gammaBuffer.index = (i + 1) % gammaBuffer.size;
+
+    if (gammaBuffer.index === 0) {
+        gammaBuffer.filled = true;
+    }
+}
+function getRecentGammaStates(n = 30) {
+
+    const size = gammaBuffer.size;
+    const i = gammaBuffer.index;
+
+    const result = [];
+
+    for (let j = 0; j < n; j++) {
+
+        const idx = (i - 1 - j + size) % size;
+
+        const val = gammaBuffer.states[idx];
+
+        if (val === undefined) break;
+
+        result.push(val);
+    }
+
+    return result.reverse(); // oldest → newest
+}
+function getRecentGammaVectors(n = 30) {
+
+    const size = gammaBuffer.size;
+    const i = gammaBuffer.index;
+
+    const result = [];
+
+    for (let j = 0; j < n; j++) {
+
+        const idx = (i - 1 - j + size) % size;
+
+        const val = gammaBuffer.vectors[idx];
+
+        if (val === undefined) break;
+
+        result.push(val);
+    }
+
+    return result.reverse();
+}
+//--------------------------------
+//---Creation of Volatility Buffer
+//-----------------------------------
+function buildVolSnapshot(ocPayload) {
+
+    const oc = ocPayload?.oc
+    const spot = ocPayload?.last_price
+
+    if (!oc || !spot) {
+        console.warn("Invalid OC payload for snapshot", ocPayload)
+        return null
+    }
+
+    const strikes = []
+
+    for (const strikeKey in oc) {
+
+        const strike = Number(strikeKey)
+        const row = oc[strikeKey]
+
+        const ce = row?.ce || {}
+        const pe = row?.pe || {}
+
+        let call_iv = Number(ce.implied_volatility || 0)
+        let put_iv = Number(pe.implied_volatility || 0)
+
+        // 🔥 CRITICAL CLEANING (YOU NEED THIS)
+        // Your data has garbage like IV = 0 or absurd values
+        if (call_iv <= 0 || call_iv > 5) call_iv = null
+        if (put_iv <= 0 || put_iv > 5) put_iv = null
+
+        // skip if both invalid
+        if (!call_iv && !put_iv) continue
+
+        strikes.push({
+            strike,
+            call_iv: call_iv || put_iv, // fallback
+            put_iv: put_iv || call_iv
+        })
+    }
+
+    // 🔥 MUST SORT
+    strikes.sort((a, b) => a.strike - b.strike)
+
+    if (strikes.length === 0) {
+        console.warn("No valid IV data")
+        return null
+    }
+
+    return {
+        spot,
+        strikes
+    }
+}
+function extractVolFeatures(timestamp, snapshot, marketBuffer) {
+    const spot = snapshot.spot
+
+    // 1. Find ATM strike
+    let atm = null
+    let minDiff = Infinity
+
+    for (const strike of snapshot.strikes) {
+        const diff = Math.abs(strike.strike - spot)
+        if (diff < minDiff) {
+            minDiff = diff
+            atm = strike
+        }
+    }
+
+    // 2. ATM IV
+    const atm_iv = (atm.call_iv + atm.put_iv) / 2
+
+    // 3. Skew (simple version)
+    const call_skew = atm.call_iv - snapshot.strikes.find(s => s.strike > spot)?.call_iv || 0
+    const put_skew = snapshot.strikes.find(s => s.strike < spot)?.put_iv - atm.put_iv || 0
+
+    // 4. HV from market buffer
+    const hv = computeHVFromBuffer(marketBuffer)
+
+    return {
+        atm_iv,
+        call_skew,
+        put_skew,
+        hv,
+        ltp: spot,
+        timestamp: timestamp
+    }
+}
+function computeHVFromBuffer(buffer, window = 50) {
+    if (!buffer.filled && buffer.index < window) return null
+
+    let returns = []
+
+    for (let i = 1; i < window; i++) {
+        const idx1 = (buffer.index - i + buffer.size) % buffer.size
+        const idx2 = (buffer.index - i - 1 + buffer.size) % buffer.size
+
+        const p1 = buffer.ltp[idx1]
+        const p2 = buffer.ltp[idx2]
+
+        if (p1 && p2) {
+            returns.push(Math.log(p1 / p2))
+        }
+    }
+
+    const mean = returns.reduce((a, b) => a + b, 0) / returns.length
+    const variance = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length
+
+    return Math.sqrt(variance) * Math.sqrt(252) // annualized
+}
+function updateVolFeatureBuffer(buffer, features) {
+    const i = buffer.index
+
+    buffer.timestamp[i] = features.timestamp
+    buffer.atm_iv[i] = features.atm_iv
+    buffer.call_skew[i] = features.call_skew
+    buffer.put_skew[i] = features.put_skew
+    buffer.hv[i] = features.hv
+    buffer.ltp[i] = features.ltp
+
+    buffer.index = (i + 1) % buffer.size
+    if (buffer.index === 0) buffer.filled = true
+}
+
+function processVolatilitySnapshot({
+    timestamp,
+    ocPayload,
+    marketBuffer,
+    volFeatureBuffer,
+    volEngine
+}) {
+
+    // =========================
+    // 1. BUILD SNAPSHOT
+    // =========================
+    const oc = ocPayload?.oc
+    const spot = ocPayload?.last_price
+
+    if (!oc || !spot) {
+        console.warn("Invalid OC payload")
+        return null
+    }
+
+    const strikes = []
+
+    for (const strikeKey in oc) {
+
+        const strike = Number(strikeKey)
+        const row = oc[strikeKey]
+
+        const ce = row?.ce || {}
+        const pe = row?.pe || {}
+
+        let call_iv = Number(ce.implied_volatility || 0)
+        let put_iv = Number(pe.implied_volatility || 0)
+
+        // 🔥 CLEAN DATA
+        if (call_iv <= 0 || call_iv > 5) call_iv = null
+        if (put_iv <= 0 || put_iv > 5) put_iv = null
+
+        if (!call_iv && !put_iv) continue
+
+        strikes.push({
+            strike,
+            call_iv: call_iv || put_iv,
+            put_iv: put_iv || call_iv
+        })
+    }
+
+    if (strikes.length === 0) {
+        console.warn("No valid strikes")
+        return null
+    }
+
+    // 🔥 SORT
+    strikes.sort((a, b) => a.strike - b.strike)
+
+    const snapshot = {
+        spot,
+        strikes
+    }
+
+    // =========================
+    // 2. FEATURE EXTRACTION
+    // =========================
+    const features = extractVolFeatures(
+        timestamp,
+        snapshot,
+        marketBuffer
+    )
+
+    if (!features) return null
+
+    // =========================
+    // 3. UPDATE BUFFER
+    // =========================
+    updateVolFeatureBuffer(volFeatureBuffer, features)
+
+    // =========================
+    // 4. COMPUTE STATE
+    // =========================
+    if (!volFeatureBuffer.filled && volFeatureBuffer.index < 20) {
+        return null
+    }
+
+    const volState = volEngine.computeState({
+        volFeatureBuffer
+    })
+
+    return volState
+}
+function getPriceHistoryFromBuffer(n = 100) {
+
+    const result = [];
+
+    const size = marketBuffer.size;
+    const i = marketBuffer.index;
+    const filled = marketBuffer.filled;
+
+    // how many valid points exist
+    const available = filled ? size : i;
+
+    const count = Math.min(n, available);
+
+    for (let j = 0; j < count; j++) {
+
+        const idx = (i - 1 - j + size) % size;
+
+        const price = marketBuffer.ltp[idx];
+
+        if (price === undefined) break;
+
+        result.push(price);
+    }
+
+    return result.reverse(); // oldest → newest
+}
+//Web socket----------------------
 function startWebSocket() {
     if(ws) return;
 
@@ -432,10 +829,10 @@ function startWebSocket() {
 
     ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        console.log(data)
+//        console.log(data)
 
-        console.log("Tick:", data.securityId, "Active:", currentSecurityId);
-        console.log("MARKET STATE:", marketState);
+//        console.log("Tick:", data.securityId, "Active:", currentSecurityId);
+//        console.log("MARKET STATE:", marketState);
 
         // ✅ Keep ONLY ONE check (you had duplicate)
         if (String(data.securityId) !== String(currentSecurityId)) return;
@@ -443,33 +840,34 @@ function startWebSocket() {
 
         handleTick(data);
         const features = featureEngine.update(data);
-    if (!features) return;
+        if (!features) return;
 
-    // =========================
-    // INJECT MARKET STATE
-    // =========================
-    features.netGEX = marketState.netGEX;
-    features.adv    = marketState.adv;
-    features.gexStd = marketState.gexStd;
+        // =========================
+        // INJECT MARKET STATE
+        // =========================
+        features.netGEX = marketState.netGEX;
+        features.adv    = marketState.adv;
+        features.gexStd = marketState.gexStd;
 
-    // =========================
-    // SAFETY CHECK (IMPORTANT)
-    // =========================
-    if (!features.netGEX || !features.gexStd) {
-        return;
-    }
+        // =========================
+        // SAFETY CHECK (IMPORTANT)
+        // =========================
+        if (!features.netGEX || !features.gexStd) {
+            return;
+        }
 
-    const rrp = rrpModel.compute(features);
-    if (!rrp) return;
+        const rrp = rrpModel.compute(features);
+        if (!rrp) return;
 
-    rrpSeries.push({
-        time: data.timestamp || Date.now(),
-        value: rrp.final
-    });
+        rrpSeries.push({
+            time: data.timestamp || Date.now(),
+            value: rrp.final
+        });
 
-    if (rrpSeries.length > 300) rrpSeries.shift();
+        if (rrpSeries.length > 300) rrpSeries.shift();
 
-    renderRRP(rrpSeries);
+        renderRRP(rrpSeries);
+
     };
 
     ws.onclose = () => {
@@ -645,10 +1043,12 @@ function renderUniverseUI(stocks) {
 }
 
 function setActiveStock(symbol) {
+//    currentSpot = null;
     stopSafeUpdateLoop(); // 🔥 prevent leak
     stopQuotePolling();
     stopAlphaLoop();          // ✅ ADD
     resetSocketCharts();      // ✅ ADD
+//    resetReflexivityState()
 
 
     const input = document.getElementById("stockSelectchart")
@@ -680,6 +1080,13 @@ function setActiveStock(symbol) {
         security_id,
         interval: 3 * 60 * 1000 // N minutes
     })
+}
+function resetReflexivityState() {
+    reflexivityState.I_series.length = 0;
+    reflexivityState.price_series.length = 0;
+    reflexivityState.dI_series.length = 0;
+    reflexivityState.beta_series.length = 0;
+    reflexivityState.phi_series.length = 0;
 }
 function drawGEXLadder(gammaLadder) {
 
@@ -789,6 +1196,7 @@ async function updateOptionChain(symbol, security_id) {
             : lastValidOC;
 
         if (!ocToUse) return;
+        const ts = Date.now()
 
         const result = processOptionChain(ocToUse);
         const flip = computeGammaFlip(result.gammaLadder);
@@ -797,6 +1205,60 @@ async function updateOptionChain(symbol, security_id) {
         lastGEXGradient = result.gexGradient;
 
         const ivData = extractIVData(ocToUse);
+        const { beta, phi } = updateReflexivityMetrics(result);
+
+        const crashRisk = computeCrashRisk(beta, phi, result.netGEX);
+
+        const regime_from_beta = getMarketRegime(beta, phi);
+
+
+
+        console.log("β:", beta, "φ:", phi, "Risk:", crashRisk, regime_from_beta);
+
+        const flow = getFlowSignals();
+
+        const gammaState = gammaEngine.computeState({
+            result,
+            marketState,
+            spot: currentSpot,
+            flip,
+            flow   // 🔥 NEW
+        });
+
+        console.log("Gamma State:", gammaState);
+
+
+
+        const gammaVector = gammaEncoder.encode(gammaState);
+
+        console.log("Gamma Vector:", gammaVector);
+        updateGammaBuffer(ts, gammaState, gammaVector);
+        const lastStates = getRecentGammaStates(10);
+        const lastVectors = getRecentGammaVectors(10);
+
+        console.log("Recent Gamma States:", lastStates);
+        console.log("Recent Gamma Vectors:", lastVectors);
+
+
+
+        // 🔥 NEW PIPELINE
+       const volState = processVolatilitySnapshot({
+        ocPayload: {
+            ts,
+            last_price: currentSpot,
+            oc: ocToUse.data.data.oc
+                },
+                marketBuffer,
+                volFeatureBuffer,
+                volEngine
+            })
+
+            if (volState) {
+                console.log("Vol State:", volState)
+            }
+
+
+
 
         requestAnimationFrame(() => {
             drawGEXLadder(result.gammaLadder);
@@ -808,7 +1270,9 @@ async function updateOptionChain(symbol, security_id) {
             plotIVStructure("iv-structure-panel", ivData.data, ivData.spot);
             renderOI(result.rows);
             renderOIChange(result.rows);
+            renderReflexivityChart();
         });
+
 
     } catch (e) {
         console.error("OC update error:", e);
@@ -962,6 +1426,7 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
             lastValidOC = optionChain;
             ocToUse = optionChain;
 
+
             //console.log("OC KEYS:",
              //   Object.keys(optionChain?.data?.data?.oc || {})
             //);
@@ -989,8 +1454,49 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
                 lastGEXGradient = result.gexGradient;
                 const ivData = extractIVData(ocToUse);
                 updateMarketState(result);
-                //console.log('ivdata', ivData.data)
-//                const { gradient, curvature } = computeIVStructure(ivData.data);
+                const ts = Date.now();
+                const flow = getFlowSignals();
+
+                const gammaState = gammaEngine.computeState({
+                    result,
+                    marketState,
+                    spot: currentSpot,
+                    flip,
+                    flow   // 🔥 NEW
+                });
+
+                console.log("Gamma State:", gammaState);
+                const gammaVector = gammaEncoder.encode(gammaState);
+
+                console.log("Gamma Vector:", gammaVector);
+                updateGammaBuffer(ts, gammaState, gammaVector);
+
+
+                // 🔥 NEW PIPELINE
+               const volState = processVolatilitySnapshot({
+                ocPayload: {
+                    ts,
+                    last_price: currentSpot,
+                    oc: ocToUse.data.data.oc
+                        },
+                        marketBuffer,
+                        volFeatureBuffer,
+                        volEngine
+                    })
+
+                    if (volState) {
+                        console.log("Vol State:", volState)
+                    }
+
+//               const { beta, phi } = updateReflexivityMetrics(result);
+//
+//                const crashRisk = computeCrashRisk(beta, phi, result.netGEX);
+//
+//                const regime_from_beta = getMarketRegime(beta, phi);
+//
+//
+//
+//                console.log("β:", beta, "φ:", phi, "Risk:", crashRisk, regime_from_beta);
 
 
 
@@ -1012,6 +1518,7 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
                     );
                     renderOI(result.rows);
                     renderOIChange(result.rows);
+                    renderReflexivityChart();
 
                 }, 0);
 
@@ -2141,6 +2648,38 @@ function initImbalanceChart() {
         ],
     });
 }
+function initFlowChart() {
+    const el = document.getElementById("flowChart");
+    if (!el) return;
+
+    if (flowChart) flowChart.dispose();
+
+    flowChart = echarts.init(el);
+
+    flowChart.setOption({
+        backgroundColor: "#111",
+        tooltip: { trigger: "axis" },
+
+        xAxis: { type: "category", data: [] },
+
+        yAxis: {
+            type: "value",
+            min: -1,
+            max: 1
+        },
+
+        series: [{
+            name: "Flow",
+            type: "line",
+            data: [],
+            smooth: true
+        }],
+        dataZoom: [
+            { type: 'inside' },
+            { type: 'slider', height: 25, bottom: 30 }
+        ],
+    });
+}
 function initLBAChart() {
     const el = document.getElementById("lbaChart");
     if (!el) return;
@@ -2445,6 +2984,75 @@ function updateImbalanceChart() {
         ],
     });
 }
+function updateFlowChart() {
+    if (!flowChart) return;
+    if (flowChart.isDisposed?.()) return;
+    if (!flowChart._model) return;
+
+    const len = marketBuffer.filled ? marketBuffer.size : marketBuffer.index;
+    if (len < 10) return;
+
+    const x = [];
+    const data = [];
+
+    for (let i = 0; i < len; i++) {
+        const v = marketBuffer.flow[i];
+
+        // 🔥 HARD FILTER (CRITICAL)
+        if (v == null || isNaN(v) || !isFinite(v)) continue;
+
+        x.push(i);
+        data.push(v);
+    }
+
+    // 🚨 MUST match lengths
+    if (data.length === 0 || x.length !== data.length) return;
+
+    flowChart.setOption({
+        xAxis: {
+            type: "category",
+            data: x
+        },
+        yAxis: {
+            type: "value",
+            min: -1,
+            max: 1
+        },
+        // ✅ TOOLTIP (UPGRADED)
+        tooltip: {
+            trigger: "axis",
+            axisPointer: {
+                type: "cross"
+            },
+            backgroundColor: "#222",
+            borderColor: "#555",
+            textStyle: {
+                color: "#fff"
+            },
+            formatter: function (params) {
+                const p = params[0];
+
+                const value = p.data;
+                const idx = p.dataIndex;
+
+                return `
+                    <b>Index:</b> ${idx}<br/>
+                    <b>Flow:</b> ${value.toFixed(4)}
+                `;
+            }
+        },
+        series: [{
+            name: "Flow",
+            type: "line",
+            data: data,
+            smooth: true
+        }],
+        dataZoom: [
+            { type: 'inside' },
+            { type: 'slider', height: 25, bottom: 20 }
+        ],
+    });
+}
 function updateLBAChart() {
     if (!lbaChart) return;
     if (lbaChart.isDisposed?.()) return;
@@ -2707,6 +3315,7 @@ function startAlphaLoop() {
         updateAlphaChart();
         updateMicroChart();       // 🔥 ADD
         updateImbalanceChart();   // 🔥 ADD
+        updateFlowChart();
         updateLBAChart();
     }, 100); // 10 FPS
 }
@@ -2716,7 +3325,170 @@ function stopAlphaLoop() {
         alphaLoop = null;
     }
 }
+//---------------------------------------
+//-------------Risk
+////////////////////////////////////
+function computeBeta() {
+    const { I_series, price_series, window } = reflexivityState;
 
+    if (I_series.length < window + 2) return null;
+
+    const EPS = 1e-8;
+
+    let logI = [];
+    let logdP = [];
+
+    for (let i = I_series.length - window; i < I_series.length - 1; i++) {
+
+        // skip duplicates
+        if (I_series[i] === I_series[i+1]) continue;
+
+        const I = Math.abs(I_series[i]);
+
+        // normalized return (IMPORTANT)
+        const dP = Math.abs(
+            (price_series[i+1] - price_series[i]) / price_series[i]
+        );
+
+        // filter noise
+        if (I > 0 && dP > 1e-5) {
+            logI.push(Math.log(I));
+            logdP.push(Math.log(dP + EPS));
+        }
+    }
+    console.log('logI:', logI)
+    console.log('logdP:', logdP)
+
+    // minimum data requirement
+    if (logI.length < 8) return null;
+
+    const meanX = logI.reduce((a,b)=>a+b,0)/logI.length;
+    const meanY = logdP.reduce((a,b)=>a+b,0)/logdP.length;
+
+    let num = 0, den = 0, varY = 0;
+
+    for (let i = 0; i < logI.length; i++) {
+        const dx = logI[i] - meanX;
+        const dy = logdP[i] - meanY;
+
+        num += dx * dy;
+        den += dx * dx;
+        varY += dy * dy;
+    }
+
+    // 🔴 critical guard
+    if (den < 1e-5) return null;
+
+    const beta = num / den;
+
+    // compute correlation (confidence)
+    const rho = num / Math.sqrt(den * varY);
+
+    // reject weak relationship
+    if (Math.abs(rho) < 0.2) return null;
+
+    // clamp beta to realistic range
+    return Math.max(-2, Math.min(beta, 2));
+}
+function computePhi(dataPoint) {
+    // expects:
+    // dataPoint.gamma
+    // dataPoint.volume
+    // dataPoint.oi_change
+
+    const gammaFlow = Math.abs(dataPoint.gamma * dataPoint.volume);
+    const oiFlow = Math.abs(dataPoint.gamma * dataPoint.oi_change);
+
+    if (gammaFlow === 0) return 0;
+
+    return Math.min(1, oiFlow / gammaFlow);
+}
+function updateReflexivityMetrics(data) {
+    if (currentSpot == null) return;
+
+    const I = Math.abs(data.netGEX || 0);  // your gamma exposure
+    const P = currentSpot;
+    console.log('I:', I)
+    const lastI = reflexivityState.I_series.at(-1);
+    const lastP = reflexivityState.price_series.at(-1);
+
+    if (lastI === I && lastP === P) {
+        return { beta: null, phi: null }; // 🔥 prevent duplicate push
+    }
+
+    reflexivityState.I_series.push(I);
+    reflexivityState.price_series.push(P);
+
+    if (reflexivityState.I_series.length > 200) {
+        reflexivityState.I_series.shift();
+        reflexivityState.price_series.shift();
+    }
+
+    // Compute beta
+    const beta = computeBeta();
+
+    if (beta !== null) {
+        reflexivityState.beta_series.push(beta);
+    }
+
+    // Compute phi
+    const phi = computePhi(data);
+
+    reflexivityState.phi_series.push(phi);
+
+    if (reflexivityState.beta_series.length > 200) {
+        reflexivityState.beta_series.shift();
+        reflexivityState.phi_series.shift();
+    }
+
+    return { beta, phi };
+}
+function renderReflexivityChart() {
+    const chart = echarts.init(document.getElementById('reflexivityChart'));
+
+    chart.setOption({
+        xAxis: {
+            type: 'category',
+            data: reflexivityState.beta_series.map((_, i) => i)
+        },
+        yAxis: [
+            { type: 'value', name: 'β' },
+            { type: 'value', name: 'φ', min: 0, max: 1 }
+        ],
+        series: [
+            {
+                name: 'β (Reflexivity)',
+                type: 'line',
+                data: reflexivityState.beta_series,
+                smooth: true
+            },
+            {
+                name: 'φ (Retention)',
+                type: 'line',
+                yAxisIndex: 1,
+                data: reflexivityState.phi_series,
+                smooth: true
+            }
+        ]
+    });
+}
+function computeCrashRisk(beta, phi, I) {
+    if (!beta || !phi) return 0;
+
+    return phi * Math.pow(I, beta - 1);
+}
+function getMarketRegime(beta, phi) {
+
+    if (beta > 1.2 && phi > 0.5) {
+        return "🔥 HIGH RISK (Gamma Squeeze / Crash)";
+    }
+
+    if (beta > 1.0 && phi > 0.3) {
+        return "⚠️ Reflexive Regime";
+    }
+
+    return "✅ Stable";
+}
     //--------------------------------------------------
     // 📦 EXPORT
     //--------------------------------------------------

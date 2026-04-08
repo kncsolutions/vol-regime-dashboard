@@ -611,16 +611,20 @@
         <div id="oi-panel" style="height:300px;"></div>
         <div id="oi-change-panel" style="height:300px;"></div>
         <h3>Micro-charts Structure</h3>
-        <h4>Micro-chart</h4>
+        <h4>Micro-chart(ask * bidQty + bid * askQty) / (bidQty + askQty)</h4>
         <div id="microChart" style="height:300px;"></div>
-        <h4>Imbalance Chart</h4>
+        <h4>Imbalance Chart(bidQty - askQty) / (bidQty + askQty)</h4>
         <div id="imbalanceChart" style="height:200px;"></div>
-        <h4>Alpha Chart</h4>
+        <h4>Flow(imbalance * data.ltq)</h4>
+        <div id="flowChart" style="height:250px;"></div>
+        <h4>Alpha Chart((0.6 * trend + 0.4 * imbalance) * 1000)</h4>
         <div id="alpha-panel" style="height:200px;"></div>
         <h4>LTP / Bid / Ask</h4>
         <div id="lbaChart" style="height:400px;"></div>
         <h4>RRP (Reversal Probability)</h4>
         <div id="rrpChart" style="height:250px;"></div>
+        <h4>Reflexivity (β) & Retention (φ)</h4>
+        <div id="reflexivityChart" style="height:250px;"></div>
 
 
     </div>

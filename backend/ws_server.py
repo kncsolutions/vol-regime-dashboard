@@ -325,4 +325,5 @@ async def dhan_feed():
 # -----------------------------
 @app.on_event("startup")
 async def startup():
+    print('DHAN Server Startup'+ DHAN_TOKEN)
     asyncio.create_task(dhan_feed())
