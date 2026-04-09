@@ -20,29 +20,107 @@ const RealtimeRenderer = (() => {
 
     let ws = null;
     let currentSecurityId = null;
+    let socketSecurityId = null;
     let currentSecurityName = null;
     let ltpLine = null;
     let isLoading = false;
     let gammaFlipLine = null;  // ✅ ADD THIS
     let lastGammaLadder = null;
     let currentSpot = null;
+    let prevClose = null;
     let quoteInterval = null;
-    const volFeatureBuffer = {
+    const netGEXBuffer = {
     size: 1000,
     index: 0,
     filled: false,
 
+    // =========================
+    // TIME
+    // =========================
     timestamp: new Array(1000),
 
+    // =========================
+    // CORE GEX
+    // =========================
+    net_gex: new Array(1000),
+    call_gex: new Array(1000),
+    put_gex: new Array(1000),
+
+    // =========================
+    // STRUCTURE
+    // =========================
+    gamma_flip: new Array(1000),
+    spot: new Array(1000),
+    spot_vs_flip: new Array(1000),
+
+    // =========================
+    // DERIVED
+    // =========================
+    regime: new Array(1000),          // +1 long gamma, -1 short gamma
+    gex_change: new Array(1000),      // ΔGEX
+};
+   const volFeatureBuffer = {
+    size: 1000,
+    index: 0,
+    filled: false,
+
+    // =========================
+    // TIME
+    // =========================
+    timestamp: new Array(1000),
+
+    // =========================
+    // CORE VOL FEATURES
+    // =========================
     atm_iv: new Array(1000),
+
+    // 🔥 NEW (quadratic model)
+    skew: new Array(1000),           // b (tilt)
+    curvature: new Array(1000),      // a (smile strength)
+    skew_angle: new Array(1000),     // geometric interpretation
+
+    // =========================
+    // LEGACY (keep for comparison / debugging)
+    // =========================
     call_skew: new Array(1000),
     put_skew: new Array(1000),
+
+    // =========================
+    // REALIZED VOL
+    // =========================
     hv: new Array(1000),
 
-    ltp: new Array(1000) // optional reuse
-};
+    // =========================
+    // PRICE
+    // =========================
+    ltp: new Array(1000),
 
-    const marketBuffer = {
+    // =========================
+    // 🔥 OPTIONAL (HIGH VALUE ADDITIONS)
+    // =========================
+
+    // skew velocity (Δskew)
+    skew_change: new Array(1000),
+
+    // curvature change (vol-of-vol proxy)
+    curvature_change: new Array(1000),
+
+    // IV change
+    iv_change: new Array(1000)
+}
+let ivChart = null
+let atmSeries, skewSeries, curvatureSeries, callSkewSeries, putSkewSeries
+
+
+// ✅ GLOBAL DATA BUFFERS
+let ivData = []
+let hvData = []
+let skewData = []
+let curvatureData = []
+let callSkewData = []
+let putSkewData = []
+
+  const marketBuffer = {
     size: 1000,
     index: 0,
     filled: false,
@@ -215,6 +293,8 @@ function initRealtimeChart(containerId) {
             });
 
     });
+    initNetGEXChart();
+    initIVStructureChart();
     initMicroChart();
     initImbalanceChart();
     initFlowChart();
@@ -251,6 +331,7 @@ function drawGammaFlip(flipPrice) {
     initVegaSkewChart();
     initOIChart();
     initOIChangeChart();
+
 
 }
 function getGammaRegime(spot, flip) {
@@ -348,14 +429,81 @@ function computeAmplification(netGEX) {
 
             }, interval)
 }
+
+///GEX Buffer
+function updateNetGEXBuffer(buffer, data) {
+
+    const size = buffer.size;
+
+    // =========================
+    // SHIFT LEFT (FIFO)
+    // =========================
+    for (let i = 0; i < size - 1; i++) {
+
+        buffer.timestamp[i] = buffer.timestamp[i + 1];
+
+        buffer.net_gex[i] = buffer.net_gex[i + 1];
+        buffer.call_gex[i] = buffer.call_gex[i + 1];
+        buffer.put_gex[i] = buffer.put_gex[i + 1];
+
+        buffer.gamma_flip[i] = buffer.gamma_flip[i + 1];
+        buffer.spot[i] = buffer.spot[i + 1];
+        buffer.spot_vs_flip[i] = buffer.spot_vs_flip[i + 1];
+
+        buffer.regime[i] = buffer.regime[i + 1];
+        buffer.gex_change[i] = buffer.gex_change[i + 1];
+    }
+
+    // =========================
+    // INSERT NEW VALUE
+    // =========================
+    const last = size - 1;
+
+    buffer.timestamp[last] = data.timestamp || Date.now();
+
+    buffer.net_gex[last] = data.net_gex;
+    buffer.call_gex[last] = data.call_gex;
+    buffer.put_gex[last] = data.put_gex;
+
+    buffer.gamma_flip[last] = data.gamma_flip;
+    buffer.spot[last] = data.spot;
+
+    buffer.spot_vs_flip[last] =
+        data.spot && data.gamma_flip
+            ? data.spot - data.gamma_flip
+            : null;
+
+    // =========================
+    // DERIVED FEATURES
+    // =========================
+    buffer.regime[last] =
+        data.net_gex > 0 ? 1 : -1;
+
+    const prev = last - 1;
+
+    buffer.gex_change[last] =
+        buffer.net_gex[last] - (buffer.net_gex[prev] || 0);
+
+    // =========================
+    // MARK FILLED
+    // =========================
+    buffer.filled = true;
+}
+function resetNetGEXBuffer() {
+    netGEXBuffer.index = 0;
+    netGEXBuffer.filled = false;
+
+    Object.keys(netGEXBuffer).forEach(key => {
+        if (Array.isArray(netGEXBuffer[key])) {
+            netGEXBuffer[key].fill(null);
+        }
+    });
+}
 //Web Socket
 //let ws = null;
 function updateMarketBuffer(data) {
-    const i = marketBuffer.index;
-
     // 🔥 EXTRACT LEVEL 1
     const level1 = data.depth?.[0];
-
     if (!level1) return;
 
     const bid = level1.bid_price;
@@ -373,25 +521,38 @@ function updateMarketBuffer(data) {
     // 🔹 Imbalance
     const imbalance =
         (bidQty - askQty) / (bidQty + askQty);
-        // 🔹 Flow
+
+    // 🔹 Flow
     const flow = imbalance * data.ltq;
 
+    const size = marketBuffer.size;
 
-    marketBuffer.ltp[i] = data.ltp;
-    marketBuffer.ltq[i] = data.ltq;
-    marketBuffer.bid[i] = bid;
-    marketBuffer.ask[i] = ask;
-    marketBuffer.microprice[i] = micro;
-    marketBuffer.imbalance[i] = imbalance;
-    marketBuffer.flow[i] = flow;
-    marketBuffer.timestamp[i] = data.ltt;
-
-    marketBuffer.index++;
-
-    if (marketBuffer.index >= marketBuffer.size) {
-        marketBuffer.index = 0;
-        marketBuffer.filled = true;
+    // 🚨 SHIFT LEFT (drop index 0)
+    for (let i = 0; i < size - 1; i++) {
+        marketBuffer.ltp[i] = marketBuffer.ltp[i + 1];
+        marketBuffer.ltq[i] = marketBuffer.ltq[i + 1];
+        marketBuffer.bid[i] = marketBuffer.bid[i + 1];
+        marketBuffer.ask[i] = marketBuffer.ask[i + 1];
+        marketBuffer.microprice[i] = marketBuffer.microprice[i + 1];
+        marketBuffer.imbalance[i] = marketBuffer.imbalance[i + 1];
+        marketBuffer.flow[i] = marketBuffer.flow[i + 1];
+        marketBuffer.timestamp[i] = marketBuffer.timestamp[i + 1];
     }
+
+    // ✅ INSERT at last position
+    const last = size - 1;
+
+    marketBuffer.ltp[last] = data.ltp;
+    marketBuffer.ltq[last] = data.ltq;
+    marketBuffer.bid[last] = bid;
+    marketBuffer.ask[last] = ask;
+    marketBuffer.microprice[last] = micro;
+    marketBuffer.imbalance[last] = imbalance;
+    marketBuffer.flow[last] = flow;
+    marketBuffer.timestamp[last] = data.ltt;
+
+    // 🟢 mark filled
+    marketBuffer.filled = true;
 }
 function getMicropriceTrend(lookback = 10) {
     const size = marketBuffer.size;
@@ -626,40 +787,231 @@ function buildVolSnapshot(ocPayload) {
         strikes
     }
 }
-function extractVolFeatures(timestamp, snapshot, marketBuffer) {
-    const spot = snapshot.spot
+function computeHVFromSpotPrevClose(spot, prevClose, currentTimestamp, marketOpenTimestamp) {
+    console.log('spot, prevClose, currentTimestamp, marketOpenTimestamp', spot, prevClose, currentTimestamp, marketOpenTimestamp)
 
-    // 1. Find ATM strike
+    if (!spot || !prevClose || spot <= 0 || prevClose <= 0) return null
+    console.log('here')
+
+    // =========================
+    // 1. LOG RETURN
+    // =========================
+    const r = Math.log(spot / prevClose)
+
+    // =========================
+    // 2. TIME FRACTION
+    // =========================
+    const elapsedMs = currentTimestamp - marketOpenTimestamp
+
+    if (!elapsedMs || elapsedMs <= 0) return null
+
+    const elapsedSeconds = elapsedMs / 1000
+
+    // Indian market ~ 6.25 hours
+    const SECONDS_PER_DAY = 6.25 * 3600
+
+    const t = elapsedSeconds / SECONDS_PER_DAY
+
+    if (t <= 0) return null
+
+    // =========================
+    // 3. ANNUALIZED HV
+    // =========================
+    const hv = Math.abs(r) / Math.sqrt(t) * Math.sqrt(252)
+
+    return hv * 100
+}
+
+function extractVolFeatures(timestamp, snapshot, marketBuffer) {
+    let spot = snapshot.spot
+    const strikes = snapshot.strikes
+
+    if (!strikes || strikes.length === 0) return null
+
+    // =========================
+    // 1. FIND ATM
+    // =========================
     let atm = null
     let minDiff = Infinity
 
-    for (const strike of snapshot.strikes) {
-        const diff = Math.abs(strike.strike - spot)
+    for (const s of strikes) {
+        const diff = Math.abs(s.strike - spot)
         if (diff < minDiff) {
             minDiff = diff
-            atm = strike
+            atm = s
         }
     }
 
-    // 2. ATM IV
+    if (!atm || atm.call_iv == null || atm.put_iv == null) {
+        console.warn("Invalid ATM")
+        return null
+    }
+
     const atm_iv = (atm.call_iv + atm.put_iv) / 2
 
-    // 3. Skew (simple version)
-    const call_skew = atm.call_iv - snapshot.strikes.find(s => s.strike > spot)?.call_iv || 0
-    const put_skew = snapshot.strikes.find(s => s.strike < spot)?.put_iv - atm.put_iv || 0
+    // =========================
+    // 2. SELECT WINDOW
+    // =========================
+    let windowStrikes = strikes.filter(
+        s => s.strike >= spot * 0.95 && s.strike <= spot * 1.05
+    )
 
-    // 4. HV from market buffer
-    const hv = computeHVFromBuffer(marketBuffer)
+    // Fallback to nearest strikes
+    if (windowStrikes.length < 5) {
+        const sortedByDistance = [...strikes].sort(
+            (a, b) => Math.abs(a.strike - spot) - Math.abs(b.strike - spot)
+        )
+        windowStrikes = sortedByDistance.slice(0, 25)
+    }
 
-    return {
+    if (windowStrikes.length < 5) return null
+
+    // =========================
+    // 3. PREPARE DATA (NORMALIZED)
+    // =========================
+    const data = []
+
+    for (const s of windowStrikes) {
+        const iv = ((s.call_iv + s.put_iv) / 2) / 100
+        if (!isFinite(iv)) continue
+
+        // 🔥 normalized strike axis
+        const x = (s.strike - spot) / spot
+
+        data.push({ x, y: iv })
+    }
+
+    if (data.length < 5) return null
+
+    // =========================
+    // 4. QUADRATIC FIT
+    // =========================
+    function quadraticFit(data) {
+        let Sx = 0, Sx2 = 0, Sx3 = 0, Sx4 = 0
+        let Sy = 0, Sxy = 0, Sx2y = 0
+        let n = data.length
+
+        for (const { x, y } of data) {
+            const x2 = x * x
+
+            Sx += x
+            Sx2 += x2
+            Sx3 += x2 * x
+            Sx4 += x2 * x2
+
+            Sy += y
+            Sxy += x * y
+            Sx2y += x2 * y
+        }
+
+        function det(a, b, c, d, e, f, g, h, i) {
+            return a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g)
+        }
+
+        const D = det(n, Sx, Sx2, Sx, Sx2, Sx3, Sx2, Sx3, Sx4)
+        if (Math.abs(D) < 1e-12) return null
+
+        const Dc = det(Sy, Sx, Sx2, Sxy, Sx2, Sx3, Sx2y, Sx3, Sx4)
+        const Db = det(n, Sy, Sx2, Sx, Sxy, Sx3, Sx2, Sx2y, Sx4)
+        const Da = det(n, Sx, Sy, Sx, Sx2, Sxy, Sx2, Sx3, Sx2y)
+
+        return {
+            c: Dc / D,
+            b: Db / D,
+            a: Da / D
+        }
+    }
+
+    const fit = quadraticFit(data)
+    if (!fit) return null
+
+    const { a, b, c } = fit
+
+    // =========================
+    // 5. INTERPRETABLE FEATURES
+    // =========================
+
+    // 🔥 curvature (smile strength)
+    const curvature = a
+
+    // 🔥 skew (tilt)
+    const skew = b
+
+    // 🔥 angle version (optional)
+    const skew_angle = Math.atan(b) * (180 / Math.PI)
+
+    // =========================
+    // 6. LEGACY SLOPE (KEEP FOR BACKWARD COMPAT)
+    // =========================
+    function computeSlope(data, key) {
+        if (!data || data.length < 2) return 0
+
+        let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0
+        let n = 0
+
+        for (const d of data) {
+            const x = d.strike
+            const y = d[key]
+            if (!isFinite(x) || !isFinite(y)) continue
+
+            sumX += x
+            sumY += y
+            sumXY += x * y
+            sumXX += x * x
+            n++
+        }
+
+        if (n < 2) return 0
+
+        const denom = n * sumXX - sumX * sumX
+        if (denom === 0) return 0
+
+        return (n * sumXY - sumX * sumY) / denom
+    }
+
+    const callSide = windowStrikes.filter(s => s.strike >= spot && isFinite(s.call_iv))
+    const putSide = windowStrikes.filter(s => s.strike <= spot && isFinite(s.put_iv))
+
+    const call_skew = computeSlope(callSide, "call_iv") * (spot / 1000)
+    const put_skew = computeSlope(putSide, "put_iv") * (spot / 1000)
+
+    // =========================
+    // 7. HV
+    // =========================
+    const marketOpenTimestamp = new Date().setHours(9, 15, 0, 0)
+    const hv = computeHVFromSpotPrevClose(
+    currentSpot,
+    prevClose,
+    timestamp,
+    marketOpenTimestamp
+        )
+    console.log('hv', hv)
+
+    // =========================
+    // FINAL OUTPUT
+    // =========================
+    const result = {
         atm_iv,
+
+        // 🔥 new features
+        skew,              // quadratic skew (b)
+        curvature,         // smile strength (a)
+        skew_angle,
+
+        // legacy
         call_skew,
         put_skew,
+
         hv,
         ltp: spot,
-        timestamp: timestamp
+        timestamp
     }
+
+    console.log("Vol Features (Upgraded):", result)
+
+    return result
 }
+
 function computeHVFromBuffer(buffer, window = 50) {
     if (!buffer.filled && buffer.index < window) return null
 
@@ -683,17 +1035,119 @@ function computeHVFromBuffer(buffer, window = 50) {
     return Math.sqrt(variance) * Math.sqrt(252) // annualized
 }
 function updateVolFeatureBuffer(buffer, features) {
-    const i = buffer.index
 
-    buffer.timestamp[i] = features.timestamp
-    buffer.atm_iv[i] = features.atm_iv
-    buffer.call_skew[i] = features.call_skew
-    buffer.put_skew[i] = features.put_skew
-    buffer.hv[i] = features.hv
-    buffer.ltp[i] = features.ltp
+    // =========================
+    // NOT FULL → NORMAL APPEND
+    // =========================
+    if (!buffer.filled) {
+        const i = buffer.index
 
-    buffer.index = (i + 1) % buffer.size
-    if (buffer.index === 0) buffer.filled = true
+        buffer.timestamp[i] = features.timestamp
+        buffer.atm_iv[i] = features.atm_iv
+
+        buffer.skew[i] = features.skew
+        buffer.curvature[i] = features.curvature
+        buffer.skew_angle[i] = features.skew_angle
+
+        buffer.call_skew[i] = features.call_skew
+        buffer.put_skew[i] = features.put_skew
+
+        buffer.hv[i] = features.hv
+        buffer.ltp[i] = features.ltp
+
+        // derivatives (safe init)
+        buffer.skew_change[i] = 0
+        buffer.curvature_change[i] = 0
+        buffer.iv_change[i] = 0
+
+        buffer.index++
+
+        if (buffer.index >= buffer.size) {
+            buffer.index = buffer.size - 1
+            buffer.filled = true
+        }
+
+        return
+    }
+
+    // =========================
+    // FULL → SHIFT LEFT (FIFO)
+    // =========================
+    const last = buffer.size - 1
+
+    for (let i = 0; i < last; i++) {
+        buffer.timestamp[i] = buffer.timestamp[i + 1]
+
+        buffer.atm_iv[i] = buffer.atm_iv[i + 1]
+
+        buffer.skew[i] = buffer.skew[i + 1]
+        buffer.curvature[i] = buffer.curvature[i + 1]
+        buffer.skew_angle[i] = buffer.skew_angle[i + 1]
+
+        buffer.call_skew[i] = buffer.call_skew[i + 1]
+        buffer.put_skew[i] = buffer.put_skew[i + 1]
+
+        buffer.hv[i] = buffer.hv[i + 1]
+        buffer.ltp[i] = buffer.ltp[i + 1]
+
+        buffer.skew_change[i] = buffer.skew_change[i + 1]
+        buffer.curvature_change[i] = buffer.curvature_change[i + 1]
+        buffer.iv_change[i] = buffer.iv_change[i + 1]
+    }
+
+    // =========================
+    // INSERT NEW AT END
+    // =========================
+    buffer.timestamp[last] = features.timestamp
+    buffer.atm_iv[last] = features.atm_iv
+
+    buffer.skew[last] = features.skew
+    buffer.curvature[last] = features.curvature
+    buffer.skew_angle[last] = features.skew_angle
+
+    buffer.call_skew[last] = features.call_skew
+    buffer.put_skew[last] = features.put_skew
+
+    buffer.hv[last] = features.hv
+    buffer.ltp[last] = features.ltp
+
+    // =========================
+    // DERIVATIVES (IMPORTANT)
+    // =========================
+    const prev = last - 1
+
+    buffer.skew_change[last] =
+        features.skew - buffer.skew[prev]
+
+    buffer.curvature_change[last] =
+        features.curvature - buffer.curvature[prev]
+
+    buffer.iv_change[last] =
+        features.atm_iv - buffer.atm_iv[prev]
+}
+function fillIV(strikes) {
+    for (let i = 1; i < strikes.length - 1; i++) {
+
+        // Fill CALL IV
+        if (strikes[i].call_iv == null) {
+            const left = strikes[i - 1].call_iv
+            const right = strikes[i + 1].call_iv
+
+            if (left != null && right != null) {
+                strikes[i].call_iv = (left + right) / 2
+            }
+        }
+
+        // Fill PUT IV
+        if (strikes[i].put_iv == null) {
+            const left = strikes[i - 1].put_iv
+            const right = strikes[i + 1].put_iv
+
+            if (left != null && right != null) {
+                strikes[i].put_iv = (left + right) / 2
+            }
+        }
+    }
 }
 
 function processVolatilitySnapshot({
@@ -707,63 +1161,77 @@ function processVolatilitySnapshot({
     // =========================
     // 1. BUILD SNAPSHOT
     // =========================
-    const oc = ocPayload?.oc
-    const spot = ocPayload?.last_price
+    const rawOC = ocPayload?.oc
+    const oc = extractOC(rawOC)
 
-    if (!oc || !spot) {
+    const ts = ocPayload?.ts ?? timestamp
+    const spot = Number(ocPayload?.last_price)
+
+    console.log('ts:', ts)
+    console.log('spot:', spot)
+
+    if (!oc || !spot || isNaN(spot)) {
         console.warn("Invalid OC payload")
         return null
     }
+    console.log("TOTAL STRIKES IN OC:", Object.keys(oc).length)
 
     const strikes = []
 
     for (const strikeKey in oc) {
 
-        const strike = Number(strikeKey)
+        const strike = parseFloat(strikeKey)
+        if (isNaN(strike)) continue
+
         const row = oc[strikeKey]
+        if (!row) continue
 
-        const ce = row?.ce || {}
-        const pe = row?.pe || {}
+        const ce = row.ce || {}
+        const pe = row.pe || {}
 
-        let call_iv = Number(ce.implied_volatility || 0)
-        let put_iv = Number(pe.implied_volatility || 0)
+        let call_iv = Number(ce.implied_volatility)
+        let put_iv = Number(pe.implied_volatility)
 
-        // 🔥 CLEAN DATA
-        if (call_iv <= 0 || call_iv > 5) call_iv = null
-        if (put_iv <= 0 || put_iv > 5) put_iv = null
-
-        if (!call_iv && !put_iv) continue
+//        if (!isFinite(call_iv) || call_iv <= 0 || call_iv > 5) call_iv = null
+//        if (!isFinite(put_iv) || put_iv <= 0 || put_iv > 5) put_iv = null
+//
+//        if (!call_iv && !put_iv) continue
+//
+//        if (call_iv == null) call_iv = put_iv
+//        if (put_iv == null) put_iv = call_iv
 
         strikes.push({
             strike,
-            call_iv: call_iv || put_iv,
-            put_iv: put_iv || call_iv
+            call_iv,
+            put_iv,
+            call_gamma: ce.greeks?.gamma ?? null,
+            put_gamma: pe.greeks?.gamma ?? null,
+            call_delta: ce.greeks?.delta ?? null,
+            put_delta: pe.greeks?.delta ?? null
         })
     }
 
     if (strikes.length === 0) {
-        console.warn("No valid strikes")
+        console.warn("No valid strikes after cleaning")
         return null
     }
+    console.log('Strikes before process:', strikes)
 
-    // 🔥 SORT
     strikes.sort((a, b) => a.strike - b.strike)
+    // 🔥 FILL MISSING IV HERE
+    fillIV(strikes)
 
-    const snapshot = {
-        spot,
-        strikes
-    }
+    const snapshot = { spot, strikes }
 
     // =========================
     // 2. FEATURE EXTRACTION
     // =========================
-    const features = extractVolFeatures(
-        timestamp,
-        snapshot,
-        marketBuffer
-    )
+    const features = extractVolFeatures(ts, snapshot, marketBuffer)
 
     if (!features) return null
+    updateIVStructureChart(features)
+
+    console.log('features:', features)
 
     // =========================
     // 3. UPDATE BUFFER
@@ -773,13 +1241,18 @@ function processVolatilitySnapshot({
     // =========================
     // 4. COMPUTE STATE
     // =========================
-    if (!volFeatureBuffer.filled && volFeatureBuffer.index < 20) {
+    if (!volFeatureBuffer.filled && volFeatureBuffer.index < 1) {
         return null
     }
+    console.log('volatility feature buffer', volFeatureBuffer)
+
+    if (volFeatureBuffer.index === 0) return null
 
     const volState = volEngine.computeState({
         volFeatureBuffer
     })
+
+    console.log('volState:', volState)
 
     return volState
 }
@@ -821,7 +1294,14 @@ function startWebSocket() {
                 console.log("✅ WS connected");
 
                 if (currentSecurityId) {
-                    subscribe(currentSecurityId, currentSecurityName);
+                    if (currentSecurityName == 'NIFTY')
+                        socketSecurityId = 66691
+                    else if (currentSecurityName == 'BANKNIFTY')
+                        socketSecurityId = 66688
+                    else
+                        socketSecurityId = currentSecurityId
+
+                    subscribe(socketSecurityId, currentSecurityName);
                 } else {
                     console.warn("⚠️ No securityId yet");
                 }
@@ -835,7 +1315,7 @@ function startWebSocket() {
 //        console.log("MARKET STATE:", marketState);
 
         // ✅ Keep ONLY ONE check (you had duplicate)
-        if (String(data.securityId) !== String(currentSecurityId)) return;
+        if (String(data.securityId) !== String(socketSecurityId)) return;
         updateMarketBuffer(data);
 
         handleTick(data);
@@ -1048,6 +1528,9 @@ function setActiveStock(symbol) {
     stopQuotePolling();
     stopAlphaLoop();          // ✅ ADD
     resetSocketCharts();      // ✅ ADD
+    resetGammaBuffer();
+    resetVolFeatureBuffer();
+    resetNetGEXBuffer();   // ✅ ADD THIS
 //    resetReflexivityState()
 
 
@@ -1078,7 +1561,7 @@ function setActiveStock(symbol) {
      startSafeUpdateLoop({
         symbol,
         security_id,
-        interval: 3 * 60 * 1000 // N minutes
+        interval: 0.2 * 60 * 1000 // N minutes
     })
 }
 function resetReflexivityState() {
@@ -1087,6 +1570,26 @@ function resetReflexivityState() {
     reflexivityState.dI_series.length = 0;
     reflexivityState.beta_series.length = 0;
     reflexivityState.phi_series.length = 0;
+}
+function resetVolFeatureBuffer() {
+    volFeatureBuffer.index = 0;
+    volFeatureBuffer.filled = false;
+
+    const keys = Object.keys(volFeatureBuffer);
+
+    keys.forEach(key => {
+        if (Array.isArray(volFeatureBuffer[key])) {
+            volFeatureBuffer[key].fill(null); // or 0 if preferred
+        }
+    });
+}
+function resetGammaBuffer() {
+    gammaBuffer.index = 0;
+    gammaBuffer.filled = false;
+
+    gammaBuffer.states.fill(null);
+    gammaBuffer.vectors.fill(null);
+    gammaBuffer.timestamps.fill(null);
 }
 function drawGEXLadder(gammaLadder) {
 
@@ -1201,6 +1704,21 @@ async function updateOptionChain(symbol, security_id) {
         const result = processOptionChain(ocToUse);
         const flip = computeGammaFlip(result.gammaLadder);
 
+        updateNetGEXBuffer(netGEXBuffer, {
+                timestamp: ts,
+                net_gex: result.netGEX,
+                call_gex: result.gammaLadder
+                    .filter(x => x.gex > 0)
+                    .reduce((s, x) => s + x.gex, 0),
+
+                put_gex: result.gammaLadder
+                    .filter(x => x.gex < 0)
+                    .reduce((s, x) => s + x.gex, 0),
+
+                gamma_flip: flip,
+                spot: currentSpot
+            });
+
         lastGammaLadder = result.gammaLadder;
         lastGEXGradient = result.gexGradient;
 
@@ -1246,7 +1764,7 @@ async function updateOptionChain(symbol, security_id) {
         ocPayload: {
             ts,
             last_price: currentSpot,
-            oc: ocToUse.data.data.oc
+            oc: ocToUse
                 },
                 marketBuffer,
                 volFeatureBuffer,
@@ -1256,6 +1774,7 @@ async function updateOptionChain(symbol, security_id) {
             if (volState) {
                 console.log("Vol State:", volState)
             }
+            updateNetGEXChart(netGEXBuffer);
 
 
 
@@ -1660,9 +2179,34 @@ function renderChart(data, tf, security_id, symbol) {
 /////////////////////////////////
 ///LTP Quote/////
 /////////////////////////////
+let cachedPrevClose = null
+function extractPrevClose(quote) {
+    if (!quote) return null
+    console.log('quote', quote)
+
+    const close = quote?.ohlc?.close
+    console.log('close', close)
+
+    if (!close || !isFinite(close) || close <= 0) {
+        console.warn("Invalid previous close")
+        return null
+    }
+
+    return close
+}
+function getPrevClose(res) {
+    if (cachedPrevClose) return cachedPrevClose
+    const quote = extractQuoteNode(res)
+
+    const close = extractPrevClose(quote)
+    if (close) cachedPrevClose = close
+
+    return cachedPrevClose
+}
 function extractSpotFromQuote(response) {
 
     const quote = extractQuoteNode(response)
+
 
     return quote?.last_price || null
 }
@@ -1728,6 +2272,7 @@ function startQuotePolling({security_id, symbol, candles, interval = 5000 }) {
             //console.log("QuoteData:", data)
 
             const newSpot = extractSpotFromQuote(data)
+            prevClose = getPrevClose(data);
 
             resolveSpot(newSpot, candles)
             // 🔥 THIS drives the right-side label
@@ -1909,6 +2454,169 @@ function renderGEXGradientEChart(gexGradient) {
     bottom: 10 } ]
     });
 }
+
+let netGEXChart = null;
+
+function initNetGEXChart() {
+    const el = document.getElementById("netgex-panel");
+    if (!el) return;
+
+    if (netGEXChart) netGEXChart.dispose();
+
+    netGEXChart = echarts.init(el);
+
+    netGEXChart.setOption({
+        backgroundColor: "#111",
+
+        grid: {
+            left: 50,
+            right: 20,
+            top: 20,
+            bottom: 80
+        },
+
+        tooltip: {
+            trigger: "axis",
+            axisPointer: { type: "cross" },
+            backgroundColor: "#222",
+            textStyle: { color: "#fff" }
+        },
+
+        legend: {
+            top: 0,
+            data: ["Net GEX", "Call GEX", "Put GEX"],
+            textStyle: { color: "#DDD" }
+        },
+
+        xAxis: {
+            type: "category",
+            data: []
+        },
+
+        yAxis: {
+            type: "value",
+            scale: true
+        },
+
+        series: [
+            {
+                name: "Net GEX",
+                type: "line",
+                data: [],
+                smooth: true
+            },
+            {
+                name: "Call GEX",
+                type: "line",
+                data: [],
+                smooth: true
+            },
+            {
+                name: "Put GEX",
+                type: "line",
+                data: [],
+                smooth: true
+            }
+        ],
+
+        dataZoom: [
+            { type: "inside" },
+            { type: "slider", height: 25, bottom: 10 }
+        ],
+        markLine: {
+                data: [{ yAxis: 0 }],
+                lineStyle: { color: "#FFD700" }
+            }
+    });
+}
+function updateNetGEXChart(buffer) {
+
+    if (!netGEXChart) return;
+    if (netGEXChart.isDisposed?.()) return;
+    if (!netGEXChart._model) return;
+
+    const size = buffer.size;
+
+    const net = [];
+    const call = [];
+    const put = [];
+
+    for (let i = 0; i < size; i++) {
+
+        const ts = buffer.timestamp[i];
+        const n = buffer.net_gex[i];
+        const c = buffer.call_gex[i];
+        const p = buffer.put_gex[i];
+
+        if (
+            !ts ||
+            n == null || c == null || p == null ||
+            !isFinite(n) || !isFinite(c) || !isFinite(p)
+        ) continue;
+
+        net.push([ts, n]);
+        call.push([ts, c]);
+        put.push([ts, p]);
+    }
+
+    if (net.length === 0) return;
+
+    netGEXChart.setOption({
+
+        xAxis: {
+            type: "time",
+            axisLabel: {
+                formatter: function (value) {
+                    return new Date(value).toLocaleTimeString();
+                }
+            }
+        },
+
+        yAxis: {
+            type: "value",
+            scale: true
+        },
+
+        tooltip: {
+            trigger: "axis",
+            formatter: function (params) {
+
+                const time = new Date(params[0].value[0]);
+
+                let text = `<b>${time.toLocaleTimeString()}</b><br/><br/>`;
+
+                params.forEach(p => {
+                    text += `${p.seriesName}: ${p.value[1].toFixed(2)}<br/>`;
+                });
+
+                return text;
+            }
+        },
+
+        series: [
+            {
+                name: "Net GEX",
+                type: "line",
+                data: net,
+                smooth: true
+            },
+            {
+                name: "Call GEX",
+                type: "line",
+                data: call,
+                smooth: true
+            },
+            {
+                name: "Put GEX",
+                type: "line",
+                data: put,
+                smooth: true
+            }
+        ]
+    });
+}
+
+
 let vegaChart = null;
 
 function initVegaChart() {
@@ -2220,6 +2928,156 @@ function plotIVStructure(containerId, ivData, spot) {
 
     chart.setOption(option)
 }
+
+
+//let ivChart = null
+
+function initIVStructureChart() {
+    const container = document.getElementById("iv-structure-detailed")
+
+    if (!container) return
+
+    ivChart = echarts.init(container)
+
+    const option = {
+        backgroundColor: "#0e1117",
+
+        tooltip: {
+            trigger: "axis"
+        },
+
+        legend: {
+            data: ["ATM IV", "HV" ,"Skew", "Curvature", "Call Skew", "Put Skew"],
+            textStyle: { color: "#DDD" },
+            top: 0
+        },
+
+        xAxis: {
+            type: "time",
+            axisLabel: { color: "#AAA" }
+        },
+
+        yAxis: [
+            {
+                type: "value",
+                name: "IV-HV",
+                position: "left",
+                axisLabel: { color: "#FFD700" }
+            },
+
+            {
+                type: "value",
+                name: "Skew/Curvature",
+                position: "right",
+                axisLabel: { color: "#00FFFF" }
+            }
+        ],
+
+        series: [
+            { name: "ATM IV", type: "line", yAxisIndex: 0, data: [] },
+            { name: "HV", type: "line", yAxisIndex: 0, data: [] },
+            { name: "Skew", type: "line", yAxisIndex: 1, data: [] },
+            { name: "Curvature", type: "line", yAxisIndex: 1, data: [] },
+            { name: "Call Skew", type: "line", yAxisIndex: 1, data: [] },
+            { name: "Put Skew", type: "line", yAxisIndex: 1, data: [] }
+        ]
+    }
+
+    ivChart.setOption(option)
+}
+function updateIVStructureChart(features) {
+    if (!ivChart || !features) return
+
+    const t = features.timestamp
+
+    // =========================
+    // 🔥 NORMALIZATION
+    // =========================
+    const atm_iv_norm = features.atm_iv / 20
+    const hv_norm = isFinite(features.hv) ? features.hv / 20 : null
+    const skew_norm = features.skew
+    const curvature_norm = features.curvature / 10
+    const call_skew_norm = features.call_skew / 100
+    const put_skew_norm = features.put_skew / 100
+
+    // =========================
+    // STORE: [time, normalized, original]
+    // =========================
+    ivData.push([t, atm_iv_norm, features.atm_iv])
+    hvData.push([t, hv_norm, features.hv])
+    skewData.push([t, skew_norm, features.skew])
+    curvatureData.push([t, curvature_norm, features.curvature])
+    callSkewData.push([t, call_skew_norm, features.call_skew])
+    putSkewData.push([t, put_skew_norm, features.put_skew])
+
+    // =========================
+    // FIXED WINDOW SIZE
+    // =========================
+    const MAX_POINTS = 1000
+
+    if (ivData.length > MAX_POINTS) {
+        ivData.shift()
+        hvData.shift()
+        skewData.shift()
+        curvatureData.shift()
+        callSkewData.shift()
+        putSkewData.shift()
+    }
+
+    // =========================
+    // UPDATE CHART
+    // =========================
+    ivChart.setOption({
+        yAxis: {
+            min: -2,
+            max: 2
+        },
+        series: [
+            {
+                name: "ATM IV",
+                data: ivData
+            },
+            {
+                name: "HV",
+                data: hvData
+            },
+            {
+                name: "Skew",
+                data: skewData
+            },
+            {
+                name: "Curvature",
+                data: curvatureData
+            },
+            {
+                name: "Call Skew",
+                data: callSkewData
+            },
+            {
+                name: "Put Skew",
+                data: putSkewData
+            }
+        ],
+                tooltip: {
+            trigger: "axis",
+            formatter: function (params) {
+                const time = new Date(params[0].value[0])
+                let text = `${time.toLocaleTimeString()}<br/><br/>`
+
+                params.forEach(p => {
+                    const original = p.data[2]
+                    text += `${p.seriesName}: ${original.toFixed(2)}<br/>`
+                })
+
+                return text
+            }
+        },
+         dataZoom: [
+            { type: 'inside' },
+            { type: 'slider'}
+        ],
+    })
+}
 let oiChart = null;
 
 function initOIChart() {
@@ -2445,6 +3303,7 @@ function processOptionChain(optionChain) {
     // 1. Extract + Validate
     // ----------------------------
     const oc = extractOC(optionChain);
+    console.log('oc', oc);
 
     if (!oc || Object.keys(oc).length === 0) {
         return { valid: false };
@@ -2664,8 +3523,7 @@ function initFlowChart() {
 
         yAxis: {
             type: "value",
-            min: -1,
-            max: 1
+
         },
 
         series: [{
@@ -3015,8 +3873,7 @@ function updateFlowChart() {
         },
         yAxis: {
             type: "value",
-            min: -1,
-            max: 1
+
         },
         // ✅ TOOLTIP (UPGRADED)
         tooltip: {

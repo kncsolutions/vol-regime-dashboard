@@ -242,8 +242,11 @@ async def dhan_feed():
                             if new_sid not in subscribed:
 
                                 if sname in ["NIFTY", "BANKNIFTY"]:
-                                    exchange_segment = "IDX_I"
+                                    print('Index')
+                                    exchange_segment = "NSE_FNO"
+
                                 else:
+                                    print('Stock')
                                     exchange_segment = "NSE_EQ"
 
                                 await ws.send(json.dumps({
