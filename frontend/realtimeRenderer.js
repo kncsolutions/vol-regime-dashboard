@@ -1,10 +1,35 @@
-import { FeatureEngine } from "./FeatureEngine.js";
-import { RRPModel } from "./RRPModel.js";
-import { GammaEngine } from "./GammaEngine.js";
-import { GammaEncoder } from "./GammaEncoder.js";
-import { VolEngine } from "./VolEngine.js";
+import { FeatureEngine } from "../scripts/models/FeatureEngine.js";
+import { RRPModel } from "../scripts/models/RRPModel.js";
+import { GammaEngine } from "../scripts/engines/GammaEngine.js";
+import { GammaEncoder } from "../scripts/encoders/GammaEncoder.js";
+import { VolEngine } from "../scripts/engines/VolEngine.js";
+import { marketBuffer, updateMarketBuffer, resetMarketBuffer } from "../scripts/buffers/marketBuffer.js";
+import { netGEXBuffer, resetNetGEXBuffer , updateNetGEXBuffer} from "../scripts/buffers/netGEXBuffer.js";
+import {gammaBuffer, updateGammaBuffer, resetGammaBuffer}  from "../scripts/buffers/gammaBuffer.js";
+import {netGEXChart, initNetGEXChart, updateNetGEXChart }  from "../scripts/uicomponents/netGEXBufferplots.js";
+import {volFeatureBuffer, resetVolFeatureBuffer, updateVolFeatureBuffer} from "../scripts/buffers/volFeatureBuffer.js";
+import {initIVStructureChart, updateIVStructureChart, resetIVStructureChart, plotIVChart,
+plotIVStructure, ivChart,
+ivData, hvData,skewData, curvatureData ,
+callSkewData , putSkewData } from "../scripts/uicomponents/ivStructureChart.js";
+import { marketState } from "../scripts/buffers/marketStateBuffer.js";
+import {initMicroChart, updateMicroChart, microChart} from "../scripts/uicomponents/microPriceChart.js";
+import {initImbalanceChart, updateImbalanceChart, imbalanceChart} from "../scripts/uicomponents/imbalanceChart.js";
+import {initFlowChart, updateFlowChart, flowChart} from "../scripts/uicomponents/flowDirectionChart.js";
+import {initLBAChart, updateLBAChart, lbaChart} from "../scripts/uicomponents/lbaChart.js";
+import {initAlphaChart, updateAlphaChart, alphaChart} from "../scripts/uicomponents/alphaChart.js";
+import {initRRPChart, renderRRP, rrpChart} from "../scripts/uicomponents/rrpChart.js";
+import {initOIChart, initOIChangeChart, renderOI, renderOIChange,
+oiChart, oiChangeChart} from "../scripts/uicomponents/oiChart.js";
+import {initVegaChart, initVegaSkewChart, renderVegaLadder, renderVegaSkew,
+vegaChart, vegaSkewChart} from "../scripts/uicomponents/vegaChart.js";
+import {toISTDate} from "../scripts/utils/timeUtils.js";
+import {initGEXGradientChart, renderGEXGradientEChart, gexGradientChart} from "../scripts/uicomponents/gexGradientChart.js";
+import {isValidOC, processOptionChain, extractOC } from "../scripts/utils/ocUtils.js";
+import {computeGammaLadder, computeNetGEX, computeGammaFlip, computeGEXGradient,
+computeVegaLadder, computeVegaSkew} from "../scripts/services/optionChainService.js";
 
-
+import {getGammaRegime} from "../scripts/logics/gammaState.js";
 
 const RealtimeRenderer = (() => {
 
@@ -29,118 +54,7 @@ const RealtimeRenderer = (() => {
     let currentSpot = null;
     let prevClose = null;
     let quoteInterval = null;
-    const netGEXBuffer = {
-    size: 1000,
-    index: 0,
-    filled: false,
 
-    // =========================
-    // TIME
-    // =========================
-    timestamp: new Array(1000),
-
-    // =========================
-    // CORE GEX
-    // =========================
-    net_gex: new Array(1000),
-    call_gex: new Array(1000),
-    put_gex: new Array(1000),
-
-    // =========================
-    // STRUCTURE
-    // =========================
-    gamma_flip: new Array(1000),
-    spot: new Array(1000),
-    spot_vs_flip: new Array(1000),
-
-    // =========================
-    // DERIVED
-    // =========================
-    regime: new Array(1000),          // +1 long gamma, -1 short gamma
-    gex_change: new Array(1000),      // ΔGEX
-};
-   const volFeatureBuffer = {
-    size: 1000,
-    index: 0,
-    filled: false,
-
-    // =========================
-    // TIME
-    // =========================
-    timestamp: new Array(1000),
-
-    // =========================
-    // CORE VOL FEATURES
-    // =========================
-    atm_iv: new Array(1000),
-
-    // 🔥 NEW (quadratic model)
-    skew: new Array(1000),           // b (tilt)
-    curvature: new Array(1000),      // a (smile strength)
-    skew_angle: new Array(1000),     // geometric interpretation
-
-    // =========================
-    // LEGACY (keep for comparison / debugging)
-    // =========================
-    call_skew: new Array(1000),
-    put_skew: new Array(1000),
-
-    // =========================
-    // REALIZED VOL
-    // =========================
-    hv: new Array(1000),
-
-    // =========================
-    // PRICE
-    // =========================
-    ltp: new Array(1000),
-
-    // =========================
-    // 🔥 OPTIONAL (HIGH VALUE ADDITIONS)
-    // =========================
-
-    // skew velocity (Δskew)
-    skew_change: new Array(1000),
-
-    // curvature change (vol-of-vol proxy)
-    curvature_change: new Array(1000),
-
-    // IV change
-    iv_change: new Array(1000)
-}
-let ivChart = null
-let atmSeries, skewSeries, curvatureSeries, callSkewSeries, putSkewSeries
-
-
-// ✅ GLOBAL DATA BUFFERS
-let ivData = []
-let hvData = []
-let skewData = []
-let curvatureData = []
-let callSkewData = []
-let putSkewData = []
-
-  const marketBuffer = {
-    size: 1000,
-    index: 0,
-    filled: false,
-
-    ltp: new Array(1000),
-    ltq: new Array(1000),
-    bid: new Array(1000),
-    ask: new Array(1000),
-    microprice: new Array(1000),
-    timestamp: new Array(1000),
-    };
-    marketBuffer.imbalance = new Array(1000);
-    marketBuffer.flow = new Array(1000);
-
-    let alphaChart = null;
-    let microChart = null;
-    let imbalanceChart = null;
-    let flowChart = null;
-    let lbaChart = null;
-    let rrpChart = null;
 
     // =========================
     // RRP ENGINE INSTANCE
@@ -148,12 +62,7 @@ let putSkewData = []
     // =========================
     // GLOBAL MARKET STATE
     // =========================
-    const marketState = {
-        netGEX: 0,
-        gexStd: 1,
-        adv: 1e7,
-        gexHistory: []
-    };
+
     const featureEngine = new FeatureEngine();
     const rrpModel = new RRPModel();
 
@@ -170,17 +79,8 @@ let putSkewData = []
 
     const gammaEngine = new GammaEngine();
     const gammaEncoder = new GammaEncoder();
-    const gammaBuffer = {
-    size: 30,
-    index: 0,
-    filled: false,
 
-    states: new Array(30),   // raw states
-    vectors: new Array(30),   // encoded vectors (for ML later)
-    timestamps: new Array(30)
-};
-
-const volEngine = new VolEngine();
+    const volEngine = new VolEngine();
 
 
 
@@ -209,35 +109,6 @@ const volEngine = new VolEngine();
     //--------------------------------------------------
     // 🧱 INIT CHART
     //--------------------------------------------------
-function resetSocketCharts() {
-
-    console.log("🧹 Resetting socket charts...");
-
-    // 1. Reset circular buffer
-    marketBuffer.index = 0;
-    marketBuffer.filled = false;
-
-    marketBuffer.ltp.fill(undefined);
-    marketBuffer.bid.fill(undefined);
-    marketBuffer.ask.fill(undefined);
-    marketBuffer.microprice.fill(undefined);
-    marketBuffer.imbalance.fill(undefined);
-    marketBuffer.timestamp.fill(undefined);
-
-    // 2. Reset RRP
-    rrpSeries.length = 0;
-
-    // 3. Clear charts
-    microChart?.clear();
-    imbalanceChart?.clear();
-    lbaChart?.clear();
-    alphaChart?.clear();
-    rrpChart?.clear();
-
-    // 4. Reset candle aggregation
-    currentCandle = null;
-    currentBucket = null;
-}
 function initRealtimeChart(containerId) {
 
 
@@ -293,14 +164,14 @@ function initRealtimeChart(containerId) {
             });
 
     });
-    initNetGEXChart();
-    initIVStructureChart();
-    initMicroChart();
-    initImbalanceChart();
-    initFlowChart();
-    initLBAChart();
-     initAlphaChart();   // 🔥 ADD THIS
-     initRRPChart();   // ✅ ADD THIS
+    initNetGEXChart("netgex-panel");
+    initIVStructureChart("iv-structure-detailed");
+    initMicroChart("microChart");
+    initImbalanceChart("imbalanceChart");
+    initFlowChart("flowChart");
+    initLBAChart("lbaChart");
+    initAlphaChart("alpha-panel");   // 🔥 ADD THIS
+    initRRPChart("rrpChart");   // ✅ ADD THIS
 }
 function updateLTPLine(ltp) {
 
@@ -326,17 +197,15 @@ function drawGammaFlip(flipPrice) {
         axisLabelVisible: true,
         title: "Gamma Flip"
     });
-    initGEXGradientChart();
-    initVegaChart();
-    initVegaSkewChart();
-    initOIChart();
-    initOIChangeChart();
+    initGEXGradientChart("gex-gradient-panel");
+    initVegaChart("vega-ladder-panel");
+    initVegaSkewChart("vega-skew-panel");
+    initOIChart("oi-panel");
+    initOIChangeChart("oi-change-panel");
 
 
 }
-function getGammaRegime(spot, flip) {
-    return spot > flip ? "LONG" : "SHORT";
-}
+
 function prepareGEXHistogram(gammaLadder) {
     return gammaLadder.map(d => ({
         x: d.strike,
@@ -393,167 +262,15 @@ function computeAmplification(netGEX) {
         }
     }
 
-    function startRealtimeFake(interval = 2000) {
 
-            if (realtimeInterval) return
-
-            console.log("🧪 Starting FAKE realtime stream")
-
-            let lastCandle = {
-                time: Math.floor(Date.now() / 1000),
-                open: 100,
-                high: 102,
-                low: 99,
-                close: 101
-            }
-
-            realtimeInterval = setInterval(() => {
-
-                const now = Math.floor(Date.now() / 1000)
-
-                // simulate price movement
-                let drift = (Math.random() - 0.5) * 2   // random walk
-                let newClose = lastCandle.close + drift
-
-                let candle = {
-                    time: now,
-                    open: lastCandle.close,
-                    high: Math.max(lastCandle.close, newClose) + Math.random(),
-                    low: Math.min(lastCandle.close, newClose) - Math.random(),
-                    close: newClose
-                }
-
-                updateCandle(candle)
-
-                lastCandle = candle
-
-            }, interval)
-}
 
 ///GEX Buffer
-function updateNetGEXBuffer(buffer, data) {
 
-    const size = buffer.size;
 
-    // =========================
-    // SHIFT LEFT (FIFO)
-    // =========================
-    for (let i = 0; i < size - 1; i++) {
 
-        buffer.timestamp[i] = buffer.timestamp[i + 1];
-
-        buffer.net_gex[i] = buffer.net_gex[i + 1];
-        buffer.call_gex[i] = buffer.call_gex[i + 1];
-        buffer.put_gex[i] = buffer.put_gex[i + 1];
-
-        buffer.gamma_flip[i] = buffer.gamma_flip[i + 1];
-        buffer.spot[i] = buffer.spot[i + 1];
-        buffer.spot_vs_flip[i] = buffer.spot_vs_flip[i + 1];
-
-        buffer.regime[i] = buffer.regime[i + 1];
-        buffer.gex_change[i] = buffer.gex_change[i + 1];
-    }
-
-    // =========================
-    // INSERT NEW VALUE
-    // =========================
-    const last = size - 1;
-
-    buffer.timestamp[last] = data.timestamp || Date.now();
-
-    buffer.net_gex[last] = data.net_gex;
-    buffer.call_gex[last] = data.call_gex;
-    buffer.put_gex[last] = data.put_gex;
-
-    buffer.gamma_flip[last] = data.gamma_flip;
-    buffer.spot[last] = data.spot;
-
-    buffer.spot_vs_flip[last] =
-        data.spot && data.gamma_flip
-            ? data.spot - data.gamma_flip
-            : null;
-
-    // =========================
-    // DERIVED FEATURES
-    // =========================
-    buffer.regime[last] =
-        data.net_gex > 0 ? 1 : -1;
-
-    const prev = last - 1;
-
-    buffer.gex_change[last] =
-        buffer.net_gex[last] - (buffer.net_gex[prev] || 0);
-
-    // =========================
-    // MARK FILLED
-    // =========================
-    buffer.filled = true;
-}
-function resetNetGEXBuffer() {
-    netGEXBuffer.index = 0;
-    netGEXBuffer.filled = false;
-
-    Object.keys(netGEXBuffer).forEach(key => {
-        if (Array.isArray(netGEXBuffer[key])) {
-            netGEXBuffer[key].fill(null);
-        }
-    });
-}
 //Web Socket
 //let ws = null;
-function updateMarketBuffer(data) {
-    // 🔥 EXTRACT LEVEL 1
-    const level1 = data.depth?.[0];
-    if (!level1) return;
 
-    const bid = level1.bid_price;
-    const ask = level1.ask_price;
-    const bidQty = level1.bid_qty || 1;
-    const askQty = level1.ask_qty || 1;
-
-    // 🛡️ guard
-    if (!bid || !ask || isNaN(bid) || isNaN(ask)) return;
-
-    // 🔹 Microprice
-    const micro =
-        (ask * bidQty + bid * askQty) / (bidQty + askQty);
-
-    // 🔹 Imbalance
-    const imbalance =
-        (bidQty - askQty) / (bidQty + askQty);
-
-    // 🔹 Flow
-    const flow = imbalance * data.ltq;
-
-    const size = marketBuffer.size;
-
-    // 🚨 SHIFT LEFT (drop index 0)
-    for (let i = 0; i < size - 1; i++) {
-        marketBuffer.ltp[i] = marketBuffer.ltp[i + 1];
-        marketBuffer.ltq[i] = marketBuffer.ltq[i + 1];
-        marketBuffer.bid[i] = marketBuffer.bid[i + 1];
-        marketBuffer.ask[i] = marketBuffer.ask[i + 1];
-        marketBuffer.microprice[i] = marketBuffer.microprice[i + 1];
-        marketBuffer.imbalance[i] = marketBuffer.imbalance[i + 1];
-        marketBuffer.flow[i] = marketBuffer.flow[i + 1];
-        marketBuffer.timestamp[i] = marketBuffer.timestamp[i + 1];
-    }
-
-    // ✅ INSERT at last position
-    const last = size - 1;
-
-    marketBuffer.ltp[last] = data.ltp;
-    marketBuffer.ltq[last] = data.ltq;
-    marketBuffer.bid[last] = bid;
-    marketBuffer.ask[last] = ask;
-    marketBuffer.microprice[last] = micro;
-    marketBuffer.imbalance[last] = imbalance;
-    marketBuffer.flow[last] = flow;
-    marketBuffer.timestamp[last] = data.ltt;
-
-    // 🟢 mark filled
-    marketBuffer.filled = true;
-}
 function getMicropriceTrend(lookback = 10) {
     const size = marketBuffer.size;
     const i = marketBuffer.index;
@@ -679,20 +396,7 @@ function getFlowSignals() {
         pricePrev
     };
 }
-function updateGammaBuffer(timestamp, state, vector = null) {
 
-    const i = gammaBuffer.index;
-
-    gammaBuffer.states[i] = state;
-    gammaBuffer.vectors[i] = vector;
-    gammaBuffer.timestamps[i] = timestamp;
-
-    gammaBuffer.index = (i + 1) % gammaBuffer.size;
-
-    if (gammaBuffer.index === 0) {
-        gammaBuffer.filled = true;
-    }
-}
 function getRecentGammaStates(n = 30) {
 
     const size = gammaBuffer.size;
@@ -1007,7 +711,7 @@ function extractVolFeatures(timestamp, snapshot, marketBuffer) {
         timestamp
     }
 
-    console.log("Vol Features (Upgraded):", result)
+//    console.log("Vol Features (Upgraded):", result)
 
     return result
 }
@@ -1034,97 +738,7 @@ function computeHVFromBuffer(buffer, window = 50) {
 
     return Math.sqrt(variance) * Math.sqrt(252) // annualized
 }
-function updateVolFeatureBuffer(buffer, features) {
 
-    // =========================
-    // NOT FULL → NORMAL APPEND
-    // =========================
-    if (!buffer.filled) {
-        const i = buffer.index
-
-        buffer.timestamp[i] = features.timestamp
-        buffer.atm_iv[i] = features.atm_iv
-
-        buffer.skew[i] = features.skew
-        buffer.curvature[i] = features.curvature
-        buffer.skew_angle[i] = features.skew_angle
-
-        buffer.call_skew[i] = features.call_skew
-        buffer.put_skew[i] = features.put_skew
-
-        buffer.hv[i] = features.hv
-        buffer.ltp[i] = features.ltp
-
-        // derivatives (safe init)
-        buffer.skew_change[i] = 0
-        buffer.curvature_change[i] = 0
-        buffer.iv_change[i] = 0
-
-        buffer.index++
-
-        if (buffer.index >= buffer.size) {
-            buffer.index = buffer.size - 1
-            buffer.filled = true
-        }
-
-        return
-    }
-
-    // =========================
-    // FULL → SHIFT LEFT (FIFO)
-    // =========================
-    const last = buffer.size - 1
-
-    for (let i = 0; i < last; i++) {
-        buffer.timestamp[i] = buffer.timestamp[i + 1]
-
-        buffer.atm_iv[i] = buffer.atm_iv[i + 1]
-
-        buffer.skew[i] = buffer.skew[i + 1]
-        buffer.curvature[i] = buffer.curvature[i + 1]
-        buffer.skew_angle[i] = buffer.skew_angle[i + 1]
-
-        buffer.call_skew[i] = buffer.call_skew[i + 1]
-        buffer.put_skew[i] = buffer.put_skew[i + 1]
-
-        buffer.hv[i] = buffer.hv[i + 1]
-        buffer.ltp[i] = buffer.ltp[i + 1]
-
-        buffer.skew_change[i] = buffer.skew_change[i + 1]
-        buffer.curvature_change[i] = buffer.curvature_change[i + 1]
-        buffer.iv_change[i] = buffer.iv_change[i + 1]
-    }
-
-    // =========================
-    // INSERT NEW AT END
-    // =========================
-    buffer.timestamp[last] = features.timestamp
-    buffer.atm_iv[last] = features.atm_iv
-
-    buffer.skew[last] = features.skew
-    buffer.curvature[last] = features.curvature
-    buffer.skew_angle[last] = features.skew_angle
-
-    buffer.call_skew[last] = features.call_skew
-    buffer.put_skew[last] = features.put_skew
-
-    buffer.hv[last] = features.hv
-    buffer.ltp[last] = features.ltp
-
-    // =========================
-    // DERIVATIVES (IMPORTANT)
-    // =========================
-    const prev = last - 1
-
-    buffer.skew_change[last] =
-        features.skew - buffer.skew[prev]
-
-    buffer.curvature_change[last] =
-        features.curvature - buffer.curvature[prev]
-
-    buffer.iv_change[last] =
-        features.atm_iv - buffer.atm_iv[prev]
-}
 function fillIV(strikes) {
     for (let i = 1; i < strikes.length - 1; i++) {
 
@@ -1167,14 +781,14 @@ function processVolatilitySnapshot({
     const ts = ocPayload?.ts ?? timestamp
     const spot = Number(ocPayload?.last_price)
 
-    console.log('ts:', ts)
-    console.log('spot:', spot)
+//    console.log('ts:', ts)
+//    console.log('spot:', spot)
 
     if (!oc || !spot || isNaN(spot)) {
         console.warn("Invalid OC payload")
         return null
     }
-    console.log("TOTAL STRIKES IN OC:", Object.keys(oc).length)
+//    console.log("TOTAL STRIKES IN OC:", Object.keys(oc).length)
 
     const strikes = []
 
@@ -1215,7 +829,7 @@ function processVolatilitySnapshot({
         console.warn("No valid strikes after cleaning")
         return null
     }
-    console.log('Strikes before process:', strikes)
+//    console.log('Strikes before process:', strikes)
 
     strikes.sort((a, b) => a.strike - b.strike)
     // 🔥 FILL MISSING IV HERE
@@ -1231,7 +845,7 @@ function processVolatilitySnapshot({
     if (!features) return null
     updateIVStructureChart(features)
 
-    console.log('features:', features)
+//    console.log('features:', features)
 
     // =========================
     // 3. UPDATE BUFFER
@@ -1244,7 +858,7 @@ function processVolatilitySnapshot({
     if (!volFeatureBuffer.filled && volFeatureBuffer.index < 1) {
         return null
     }
-    console.log('volatility feature buffer', volFeatureBuffer)
+//    console.log('volatility feature buffer', volFeatureBuffer)
 
     if (volFeatureBuffer.index === 0) return null
 
@@ -1252,7 +866,7 @@ function processVolatilitySnapshot({
         volFeatureBuffer
     })
 
-    console.log('volState:', volState)
+//    console.log('volState:', volState)
 
     return volState
 }
@@ -1284,14 +898,17 @@ function getPriceHistoryFromBuffer(n = 100) {
 }
 //Web socket----------------------
 function startWebSocket() {
-    if(ws) return;
+    if (ws) {
+        ws.close();   // 🔥 ADD THIS
+        ws = null;
+    }
 
-    stopWebSocket(); // prevent duplicates
+//    stopWebSocket(); // prevent duplicates
 
     ws = new WebSocket("ws://localhost:8001/ws");
 
     ws.onopen = () => {
-                console.log("✅ WS connected");
+//                console.log("✅ WS connected");
 
                 if (currentSecurityId) {
                     if (currentSecurityName == 'NIFTY')
@@ -1319,6 +936,7 @@ function startWebSocket() {
         updateMarketBuffer(data);
 
         handleTick(data);
+//        console.log("WS tick", data.ltp, marketBuffer.index);
         const features = featureEngine.update(data);
         if (!features) return;
 
@@ -1399,18 +1017,20 @@ function handleTick(tick) {
 
         currentBucket = bucket
 
-        currentCandle = {
-            time: bucket,
-            open: price,
-            high: price,
-            low: price,
-            close: price
-        }
-        console.log({
-                tf: activeTimeframe,
-                currentBucket,
-                tickTime: Math.floor(tick.timestamp),
-            });
+        if (!currentCandle) {
+                currentCandle = {
+                    time: Math.floor(tick.timestamp),
+                    open: tick.ltp,
+                    high: tick.ltp,
+                    low: tick.ltp,
+                    close: tick.ltp
+                };
+            }
+//        console.log({
+//                tf: activeTimeframe,
+//                currentBucket,
+//                tickTime: Math.floor(tick.timestamp),
+//            });
         if (!currentCandle) return;
 
         updateCandle(currentCandle)
@@ -1442,7 +1062,7 @@ function subscribe(securityId, symbol) {
         securityName: symbol
     }));
 
-    console.log("📡 Subscribed to:", securityId);
+//    console.log("📡 Subscribed to:", securityId);
 }
 function changeSecurity(securityId, symbol) {
     currentSecurityId = String(securityId);
@@ -1527,9 +1147,11 @@ function setActiveStock(symbol) {
     stopSafeUpdateLoop(); // 🔥 prevent leak
     stopQuotePolling();
     stopAlphaLoop();          // ✅ ADD
-    resetSocketCharts();      // ✅ ADD
+//    resetSocketCharts();      // ✅ ADD
+    resetMarketBuffer();
     resetGammaBuffer();
     resetVolFeatureBuffer();
+    resetIVStructureChart();
     resetNetGEXBuffer();   // ✅ ADD THIS
 //    resetReflexivityState()
 
@@ -1561,8 +1183,9 @@ function setActiveStock(symbol) {
      startSafeUpdateLoop({
         symbol,
         security_id,
-        interval: 0.2 * 60 * 1000 // N minutes
+        interval: 0.1 * 60 * 1000 // N minutes
     })
+
 }
 function resetReflexivityState() {
     reflexivityState.I_series.length = 0;
@@ -1571,26 +1194,8 @@ function resetReflexivityState() {
     reflexivityState.beta_series.length = 0;
     reflexivityState.phi_series.length = 0;
 }
-function resetVolFeatureBuffer() {
-    volFeatureBuffer.index = 0;
-    volFeatureBuffer.filled = false;
 
-    const keys = Object.keys(volFeatureBuffer);
 
-    keys.forEach(key => {
-        if (Array.isArray(volFeatureBuffer[key])) {
-            volFeatureBuffer[key].fill(null); // or 0 if preferred
-        }
-    });
-}
-function resetGammaBuffer() {
-    gammaBuffer.index = 0;
-    gammaBuffer.filled = false;
-
-    gammaBuffer.states.fill(null);
-    gammaBuffer.vectors.fill(null);
-    gammaBuffer.timestamps.fill(null);
-}
 function drawGEXLadder(gammaLadder) {
 
     const overlay = document.getElementById("gex-overlay");
@@ -1666,11 +1271,7 @@ function attachGEXListeners() {
     // ✅ optional (smooth updates)
     chart.subscribeCrosshairMove(redraw);
 }
-function isValidOC(optionChain) {
-    const oc = optionChain?.data?.data?.oc;
 
-    return oc && Object.keys(oc).length > 0;
-}
 ///////////////////////////////////
 ////update every n periods
 //////////////////////////////////
@@ -1743,19 +1344,19 @@ async function updateOptionChain(symbol, security_id) {
             flow   // 🔥 NEW
         });
 
-        console.log("Gamma State:", gammaState);
+//        console.log("Gamma State:", gammaState);
 
 
 
         const gammaVector = gammaEncoder.encode(gammaState);
 
-        console.log("Gamma Vector:", gammaVector);
+//        console.log("Gamma Vector:", gammaVector);
         updateGammaBuffer(ts, gammaState, gammaVector);
         const lastStates = getRecentGammaStates(10);
         const lastVectors = getRecentGammaVectors(10);
 
-        console.log("Recent Gamma States:", lastStates);
-        console.log("Recent Gamma Vectors:", lastVectors);
+//        console.log("Recent Gamma States:", lastStates);
+//        console.log("Recent Gamma Vectors:", lastVectors);
 
 
 
@@ -1772,7 +1373,7 @@ async function updateOptionChain(symbol, security_id) {
             })
 
             if (volState) {
-                console.log("Vol State:", volState)
+//                console.log("Vol State:", volState)
             }
             updateNetGEXChart(netGEXBuffer);
 
@@ -1782,13 +1383,13 @@ async function updateOptionChain(symbol, security_id) {
         requestAnimationFrame(() => {
             drawGEXLadder(result.gammaLadder);
             drawGammaFlip(flip);
-            renderGEXGradientEChart(result.gexGradient);
-            renderVegaLadder(result.vegaLadder);
-            renderVegaSkew(result.vegaSkew);
+            renderGEXGradientEChart(result.gexGradient, currentSpot);
+            renderVegaLadder(result.vegaLadder, currentSpot);
+            renderVegaSkew(result.vegaSkew, currentSpot);
             plotIVChart("iv-smile-panel", ivData);
             plotIVStructure("iv-structure-panel", ivData.data, ivData.spot);
-            renderOI(result.rows);
-            renderOIChange(result.rows);
+            renderOI(result.rows, currentSpot);
+            renderOIChange(result.rows, currentSpot);
             renderReflexivityChart();
         });
 
@@ -1984,28 +1585,43 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
                     flow   // 🔥 NEW
                 });
 
-                console.log("Gamma State:", gammaState);
+//                console.log("Gamma State:", gammaState);
                 const gammaVector = gammaEncoder.encode(gammaState);
 
-                console.log("Gamma Vector:", gammaVector);
+//                console.log("Gamma Vector:", gammaVector);
                 updateGammaBuffer(ts, gammaState, gammaVector);
 
 
-                // 🔥 NEW PIPELINE
-               const volState = processVolatilitySnapshot({
-                ocPayload: {
-                    ts,
-                    last_price: currentSpot,
-                    oc: ocToUse.data.data.oc
-                        },
-                        marketBuffer,
-                        volFeatureBuffer,
-                        volEngine
-                    })
+//               // 🔥 NEW PIPELINE
+//               const volState = processVolatilitySnapshot({
+//                ocPayload: {
+//                    ts,
+//                    last_price: currentSpot,
+//                    oc: ocToUse
+//                        },
+//                        marketBuffer,
+//                        volFeatureBuffer,
+//                        volEngine
+//                    })
 
-                    if (volState) {
-                        console.log("Vol State:", volState)
-                    }
+//                    if (volState) {
+//                        console.log("Vol State:", volState)
+//                    }
+//                    updateNetGEXBuffer(netGEXBuffer, {
+//                            timestamp: ts,
+//                            net_gex: result.netGEX,
+//                            call_gex: result.gammaLadder
+//                                .filter(x => x.gex > 0)
+//                                .reduce((s, x) => s + x.gex, 0),
+//
+//                            put_gex: result.gammaLadder
+//                                .filter(x => x.gex < 0)
+//                                .reduce((s, x) => s + x.gex, 0),
+//
+//                            gamma_flip: flip,
+//                            spot: currentSpot
+//                        });
+//                    updateNetGEXChart(netGEXBuffer);
 
 //               const { beta, phi } = updateReflexivityMetrics(result);
 //
@@ -2026,17 +1642,17 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
 
                     drawGEXLadder(result.gammaLadder);
                     drawGammaFlip(flip);
-                    renderGEXGradientEChart(result.gexGradient);
-                    renderVegaLadder(result.vegaLadder);
-                    renderVegaSkew(result.vegaSkew);
+                    renderGEXGradientEChart(result.gexGradient, currentSpot);
+                    renderVegaLadder(result.vegaLadder, currentSpot);
+                    renderVegaSkew(result.vegaSkew, currentSpot);
                     plotIVChart("iv-smile-panel", ivData);
                     plotIVStructure(
                         "iv-structure-panel",
                         ivData.data,
                         ivData.spot
                     );
-                    renderOI(result.rows);
-                    renderOIChange(result.rows);
+                    renderOI(result.rows, currentSpot);
+                    renderOIChange(result.rows, currentSpot);
                     renderReflexivityChart();
 
                 }, 0);
@@ -2078,46 +1694,7 @@ function resetRealtimeState() {
     currentBucket = null
 }
 
-function toISTDate(ts) {
-    const date = new Date(ts * 1000)
 
-    return date.toLocaleDateString("en-CA", {   // YYYY-MM-DD format
-        timeZone: "Asia/Kolkata"
-    })
-}
-function toISTDateTimeIntraday(ts) {
-    // If timestamp is in seconds → convert to ms
-    if (ts < 1e12) ts = ts * 1000;
-
-    const date = new Date(ts);
-
-    // Convert to IST using Intl
-    const options = {
-        timeZone: "Asia/Kolkata",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false
-    };
-
-    const parts = new Intl.DateTimeFormat("en-GB", options)
-        .formatToParts(date);
-
-    const get = (type) => parts.find(p => p.type === type).value;
-
-    return `${get("year")}-${get("month")}-${get("day")} ` +
-           `${get("hour")}:${get("minute")}:${get("second")}`;
-}
-
-function toChartDate(ts) {
-    if (ts < 1e12) ts *= 1000;
-
-    // IMPORTANT: use UTC ISO, not IST
-    return new Date(ts).toISOString().slice(0, 10); // YYYY-MM-DD
-}
 
 function renderChart(data, tf, security_id, symbol) {
 
@@ -2182,10 +1759,10 @@ function renderChart(data, tf, security_id, symbol) {
 let cachedPrevClose = null
 function extractPrevClose(quote) {
     if (!quote) return null
-    console.log('quote', quote)
+//    console.log('quote', quote)
 
     const close = quote?.ohlc?.close
-    console.log('close', close)
+//    console.log('close', close)
 
     if (!close || !isFinite(close) || close <= 0) {
         console.warn("Invalid previous close")
@@ -2195,7 +1772,7 @@ function extractPrevClose(quote) {
     return close
 }
 function getPrevClose(res) {
-    if (cachedPrevClose) return cachedPrevClose
+   if (cachedPrevClose) return cachedPrevClose
     const quote = extractQuoteNode(res)
 
     const close = extractPrevClose(quote)
@@ -2331,1043 +1908,29 @@ function destroy() {
  //----------------------------------
  //----Other Charts----------
  //-------------------------------
- let gexGradientChart = null;
 
-function initGEXGradientChart() {
-    const el = document.getElementById("gex-gradient-panel");
-    if (!el) return;
 
-    if (gexGradientChart) {
-        gexGradientChart.dispose();
-    }
 
-    gexGradientChart = echarts.init(el);
 
-    const option = {
-        backgroundColor: "#111",
-        grid: {
-            left: 50,
-            right: 20,
-            top: 10,
-            bottom: 30
-        },
-        xAxis: {
-            type: "value",
-            name: "Gradient",
-            axisLine: { lineStyle: { color: "#888" } },
-            splitLine: { lineStyle: { color: "#222" } }
-        },
-        yAxis: {
-            type: "value",
-            name: "Strike",
-            axisLine: { lineStyle: { color: "#888" } },
-            splitLine: { lineStyle: { color: "#222" } }
-        },
-        series: [{
-            type: "bar",
-            data: []
-        }]
-    };
 
-    gexGradientChart.setOption(option);
-}
-function renderGEXGradientEChart(gexGradient) {
 
-    if (!gexGradientChart || !gexGradient) return;
 
-    const spot = currentSpot;
 
-    // 🔹 Step 1: filter
-    const range = currentSpot * 0.20; // 3%
 
-        const filtered = gexGradient.filter(v =>
-            !spot || Math.abs(v.strike - spot) <= range
-        );
 
 
-    // 🔹 Step 2: sort
-    filtered.sort((a, b) => a.strike - b.strike);
 
-    // 🔹 Step 3: x-axis (strikes)
-    const strikes = filtered.map(g => g.strike);
 
-    // ✅ Step 4: REPLACE gradients with styled data
-    const data = filtered.map(g => ({
-        value: g.gradient,
-        itemStyle: {
-            color: g.gradient > 0 ? "#00bfff" : "#ff0066"
-        }
-    }));
-
-    // 🔹 Step 5: render
-    gexGradientChart.setOption({
-        xAxis: {
-            type: "category",
-            data: strikes
-        },
-        yAxis: {
-            type: "value"
-        },
-        series: [{
-            type: "line",
-            data: data,
-            smooth: true,
-            areaStyle: { opacity: 0.2 },
-            lineStyle: { width: 2 },
-
-            markLine: {
-                data: [{ yAxis: 0 }],
-                lineStyle: {
-                    color: "#FFD700"
-                }
-            },
-        }],
-        tooltip: {
-                trigger: "axis",
-                axisPointer: {
-                    type: "cross"
-                },
-                backgroundColor: "#222",
-                borderColor: "#555",
-                textStyle: {
-                    color: "#fff"
-                },
-                formatter: function (params) {
-                    const p = params[0];  // single series
-
-                    const strike = p.axisValue;
-                    const gradient = p.data.value;
-
-                    return `
-                        <b>Strike:</b> ${strike}<br/>
-                        <b>Gradient:</b> ${gradient.toFixed(2)}
-                    `;
-                }
-            },
-           grid: {
-          left: 40,
-          right: 20,
-          top: 20,
-          bottom: 80   // 👈 increase this
-        },
-        dataZoom: [{type: "inside"}, {type: "slider",height: 30,
-    bottom: 10 } ]
-    });
-}
-
-let netGEXChart = null;
-
-function initNetGEXChart() {
-    const el = document.getElementById("netgex-panel");
-    if (!el) return;
-
-    if (netGEXChart) netGEXChart.dispose();
-
-    netGEXChart = echarts.init(el);
-
-    netGEXChart.setOption({
-        backgroundColor: "#111",
-
-        grid: {
-            left: 50,
-            right: 20,
-            top: 20,
-            bottom: 80
-        },
-
-        tooltip: {
-            trigger: "axis",
-            axisPointer: { type: "cross" },
-            backgroundColor: "#222",
-            textStyle: { color: "#fff" }
-        },
-
-        legend: {
-            top: 0,
-            data: ["Net GEX", "Call GEX", "Put GEX"],
-            textStyle: { color: "#DDD" }
-        },
-
-        xAxis: {
-            type: "category",
-            data: []
-        },
-
-        yAxis: {
-            type: "value",
-            scale: true
-        },
-
-        series: [
-            {
-                name: "Net GEX",
-                type: "line",
-                data: [],
-                smooth: true
-            },
-            {
-                name: "Call GEX",
-                type: "line",
-                data: [],
-                smooth: true
-            },
-            {
-                name: "Put GEX",
-                type: "line",
-                data: [],
-                smooth: true
-            }
-        ],
-
-        dataZoom: [
-            { type: "inside" },
-            { type: "slider", height: 25, bottom: 10 }
-        ],
-        markLine: {
-                data: [{ yAxis: 0 }],
-                lineStyle: { color: "#FFD700" }
-            }
-    });
-}
-function updateNetGEXChart(buffer) {
-
-    if (!netGEXChart) return;
-    if (netGEXChart.isDisposed?.()) return;
-    if (!netGEXChart._model) return;
-
-    const size = buffer.size;
-
-    const net = [];
-    const call = [];
-    const put = [];
-
-    for (let i = 0; i < size; i++) {
-
-        const ts = buffer.timestamp[i];
-        const n = buffer.net_gex[i];
-        const c = buffer.call_gex[i];
-        const p = buffer.put_gex[i];
-
-        if (
-            !ts ||
-            n == null || c == null || p == null ||
-            !isFinite(n) || !isFinite(c) || !isFinite(p)
-        ) continue;
-
-        net.push([ts, n]);
-        call.push([ts, c]);
-        put.push([ts, p]);
-    }
-
-    if (net.length === 0) return;
-
-    netGEXChart.setOption({
-
-        xAxis: {
-            type: "time",
-            axisLabel: {
-                formatter: function (value) {
-                    return new Date(value).toLocaleTimeString();
-                }
-            }
-        },
-
-        yAxis: {
-            type: "value",
-            scale: true
-        },
-
-        tooltip: {
-            trigger: "axis",
-            formatter: function (params) {
-
-                const time = new Date(params[0].value[0]);
-
-                let text = `<b>${time.toLocaleTimeString()}</b><br/><br/>`;
-
-                params.forEach(p => {
-                    text += `${p.seriesName}: ${p.value[1].toFixed(2)}<br/>`;
-                });
-
-                return text;
-            }
-        },
-
-        series: [
-            {
-                name: "Net GEX",
-                type: "line",
-                data: net,
-                smooth: true
-            },
-            {
-                name: "Call GEX",
-                type: "line",
-                data: call,
-                smooth: true
-            },
-            {
-                name: "Put GEX",
-                type: "line",
-                data: put,
-                smooth: true
-            }
-        ]
-    });
-}
-
-
-let vegaChart = null;
-
-function initVegaChart() {
-    const el = document.getElementById("vega-ladder-panel");
-    if (!el) return;
-
-    if (vegaChart) {
-        vegaChart.dispose();
-    }
-
-    vegaChart = echarts.init(el);
-
-    vegaChart.setOption({
-        backgroundColor: "#111",
-        grid: { left: 50, right: 20, top: 10, bottom: 30 },
-
-        tooltip: {
-            trigger: "axis",
-            axisPointer: { type: "cross" },
-            backgroundColor: "#222",
-            textStyle: { color: "#fff" }
-        },
-
-        xAxis: {
-            type: "category",
-            name: "Strike",
-            axisLine: { lineStyle: { color: "#888" } },
-            axisLabel: { color: "#AAA" }
-        },
-
-        yAxis: {
-            type: "value",
-            name: "Vega",
-            axisLine: { lineStyle: { color: "#888" } },
-            splitLine: { lineStyle: { color: "#222" } }
-        },
-
-        series: [{
-            type: "bar",
-            data: []
-        }]
-    });
-}
-function renderVegaLadder(vegaLadder) {
-
-    if (!vegaChart || !vegaLadder) return;
-
-    const spot = currentSpot;
-
-    // 🔥 focus near spot
-    const range = currentSpot * 0.20; // 3%
-
-        const filtered = vegaLadder.filter(v =>
-            !spot || Math.abs(v.strike - spot) <= range
-        );
-
-    // 🔥 sort by strike
-    filtered.sort((a, b) => a.strike - b.strike);
-
-    const strikes = filtered.map(v => v.strike);
-
-    const data = filtered.map(v => ({
-        value: v.vega,
-        itemStyle: {
-            color: v.vega > 0 ? "#ffa500" : "#00ffcc"
-        }
-    }));
-
-    vegaChart.setOption({
-        xAxis: {
-            data: strikes
-        },
-        series: [{
-            data: data
-        }],
-        grid: {
-          left: 40,
-          right: 20,
-          top: 20,
-          bottom: 80   // 👈 increase this
-        },
-        dataZoom: [{type: "inside"}, {type: "slider",height: 30,
-    bottom: 10 } ]
-    });
-}
-
-let vegaSkewChart = null;
-
-function initVegaSkewChart() {
-    const el = document.getElementById("vega-skew-panel");
-    if (!el) return;
-
-    if (vegaSkewChart) {
-        vegaSkewChart.dispose();
-    }
-
-    vegaSkewChart = echarts.init(el);
-
-    vegaSkewChart.setOption({
-        backgroundColor: "#111",
-        grid: { left: 50, right: 20, top: 10, bottom: 30 },
-
-        tooltip: {
-            trigger: "axis",
-            axisPointer: { type: "cross" },
-            backgroundColor: "#222",
-            textStyle: { color: "#fff" }
-        },
-
-        xAxis: {
-            type: "category",
-            name: "Strike",
-            axisLine: { lineStyle: { color: "#888" } },
-            axisLabel: { color: "#AAA" }
-        },
-
-        yAxis: {
-            type: "value",
-            name: "Vega",
-            axisLine: { lineStyle: { color: "#888" } },
-            splitLine: { lineStyle: { color: "#222" } }
-        },
-
-        series: [{
-            type: "line",
-            data: []
-        }]
-    });
-}
-function renderVegaSkew(vegaSkew) {
-
-    if (!vegaSkewChart || !vegaSkew) return;
-
-    const spot = currentSpot;
-
-    // 🔥 focus near spot
-    const range = currentSpot * 0.08; // 3%
-
-        const filtered = vegaSkew.filter(v =>
-            !spot || Math.abs(v.strike - spot) <= range
-        );
-
-    // 🔥 sort by strike
-    filtered.sort((a, b) => a.strike - b.strike);
-
-    const strikes = filtered.map(v => v.strike);
-
-    const data = filtered.map(v => ({
-        value: v.vega,
-        itemStyle: {
-            color: v.vega > 0 ? "#ffa500" : "#00ffcc"
-        }
-    }));
-
-    vegaSkewChart.setOption({
-        xAxis: {
-            data: strikes
-        },
-        series: [{
-            data: data
-        }],
-        grid: {
-          left: 40,
-          right: 20,
-          top: 20,
-          bottom: 80   // 👈 increase this
-        },
-        dataZoom: [{type: "inside"}, {type: "slider",height: 30,
-    bottom: 10 } ]
-    });
-}
-function plotIVChart(containerId, ivPayload) {
-
-    const { data, spot } = ivPayload
-
-    if (!Array.isArray(data) || data.length === 0) {
-        console.warn("No IV data")
-        return
-    }
-
-    const chart = echarts.init(document.getElementById(containerId))
-
-    const strikes = data.map(d => d.strike)
-    const ivValues = data.map(d => d.iv)
-
-    const option = {
-        grid: { left: 50, right: 20, top: 20, bottom: 70 },
-
-        tooltip: {
-            trigger: 'axis',
-            formatter: p => {
-                const d = p[0]
-                return `Strike: ${d.axisValue}<br>IV: ${d.data.toFixed(2)}`
-            }
-        },
-
-        xAxis: {
-            type: 'category',
-            data: strikes,
-            name: 'Strike'
-        },
-
-        yAxis: {
-            type: 'value',
-            name: 'IV'
-        },
-
-        dataZoom: [
-            { type: 'inside' },
-            { type: 'slider', height: 25, bottom: 10 }
-        ],
-
-        series: [
-            {
-                name: 'IV (OTM)',
-                type: 'line',
-                data: ivValues,
-                smooth: true,
-                showSymbol: false,
-
-                // 🔥 Highlight ATM (spot)
-                markLine: {
-                    symbol: 'none',
-                    data: [
-                        { xAxis: spot }
-                    ],
-                    label: {
-                        formatter: 'Spot'
-                    }
-                }
-            }
-        ]
-    }
-
-    chart.setOption(option)
-}
-function plotIVStructure(containerId, ivData, spot) {
-
-    if (!Array.isArray(ivData) || ivData.length < 3) {
-        console.warn("Not enough IV data")
-        return
-    }
-
-    const chart = echarts.init(document.getElementById(containerId))
-
-    const { gradient, curvature } = computeIVStructure(ivData)
-
-    const strikes = ivData.map(d => d.strike)
-
-    const option = {
-        grid: { left: 60, right: 60, top: 20, bottom: 70 },
-
-        tooltip: { trigger: 'axis' },
-
-        legend: {
-            data: ['IV Gradient', 'IV Curvature']
-        },
-
-        xAxis: {
-            type: 'category',
-            data: strikes,
-            name: 'Strike'
-        },
-
-        yAxis: [
-            {
-                type: 'value',
-                name: '∂IV/∂K',
-                position: 'left'
-            },
-            {
-                type: 'value',
-                name: '∂²IV/∂K²',
-                position: 'right'
-            }
-        ],
-
-        dataZoom: [
-            { type: 'inside' },
-            { type: 'slider', height: 25, bottom: 20 }
-        ],
-
-        series: [
-            {
-                name: 'IV Gradient',
-                type: 'line',
-                data: gradient,
-                smooth: true,
-                yAxisIndex: 0
-            },
-            {
-                name: 'IV Curvature',
-                type: 'line',
-                data: curvature,
-                smooth: true,
-                yAxisIndex: 1
-            },
-            {
-                // 🔥 optional: mark spot
-                type: 'line',
-                markLine: {
-                    symbol: 'none',
-                    data: [{ xAxis: spot }],
-                    label: { formatter: 'Spot' }
-                }
-            }
-        ]
-    }
-
-    chart.setOption(option)
-}
-
-
-//let ivChart = null
-
-function initIVStructureChart() {
-    const container = document.getElementById("iv-structure-detailed")
-
-    if (!container) return
-
-    ivChart = echarts.init(container)
-
-    const option = {
-        backgroundColor: "#0e1117",
-
-        tooltip: {
-            trigger: "axis"
-        },
-
-        legend: {
-            data: ["ATM IV", "HV" ,"Skew", "Curvature", "Call Skew", "Put Skew"],
-            textStyle: { color: "#DDD" },
-            top: 0
-        },
-
-        xAxis: {
-            type: "time",
-            axisLabel: { color: "#AAA" }
-        },
-
-        yAxis: [
-            {
-                type: "value",
-                name: "IV-HV",
-                position: "left",
-                axisLabel: { color: "#FFD700" }
-            },
-
-            {
-                type: "value",
-                name: "Skew/Curvature",
-                position: "right",
-                axisLabel: { color: "#00FFFF" }
-            }
-        ],
-
-        series: [
-            { name: "ATM IV", type: "line", yAxisIndex: 0, data: [] },
-            { name: "HV", type: "line", yAxisIndex: 0, data: [] },
-            { name: "Skew", type: "line", yAxisIndex: 1, data: [] },
-            { name: "Curvature", type: "line", yAxisIndex: 1, data: [] },
-            { name: "Call Skew", type: "line", yAxisIndex: 1, data: [] },
-            { name: "Put Skew", type: "line", yAxisIndex: 1, data: [] }
-        ]
-    }
-
-    ivChart.setOption(option)
-}
-function updateIVStructureChart(features) {
-    if (!ivChart || !features) return
-
-    const t = features.timestamp
-
-    // =========================
-    // 🔥 NORMALIZATION
-    // =========================
-    const atm_iv_norm = features.atm_iv / 20
-    const hv_norm = isFinite(features.hv) ? features.hv / 20 : null
-    const skew_norm = features.skew
-    const curvature_norm = features.curvature / 10
-    const call_skew_norm = features.call_skew / 100
-    const put_skew_norm = features.put_skew / 100
-
-    // =========================
-    // STORE: [time, normalized, original]
-    // =========================
-    ivData.push([t, atm_iv_norm, features.atm_iv])
-    hvData.push([t, hv_norm, features.hv])
-    skewData.push([t, skew_norm, features.skew])
-    curvatureData.push([t, curvature_norm, features.curvature])
-    callSkewData.push([t, call_skew_norm, features.call_skew])
-    putSkewData.push([t, put_skew_norm, features.put_skew])
-
-    // =========================
-    // FIXED WINDOW SIZE
-    // =========================
-    const MAX_POINTS = 1000
-
-    if (ivData.length > MAX_POINTS) {
-        ivData.shift()
-        hvData.shift()
-        skewData.shift()
-        curvatureData.shift()
-        callSkewData.shift()
-        putSkewData.shift()
-    }
-
-    // =========================
-    // UPDATE CHART
-    // =========================
-    ivChart.setOption({
-        yAxis: {
-            min: -2,
-            max: 2
-        },
-        series: [
-            {
-                name: "ATM IV",
-                data: ivData
-            },
-            {
-                name: "HV",
-                data: hvData
-            },
-            {
-                name: "Skew",
-                data: skewData
-            },
-            {
-                name: "Curvature",
-                data: curvatureData
-            },
-            {
-                name: "Call Skew",
-                data: callSkewData
-            },
-            {
-                name: "Put Skew",
-                data: putSkewData
-            }
-        ],
-                tooltip: {
-            trigger: "axis",
-            formatter: function (params) {
-                const time = new Date(params[0].value[0])
-                let text = `${time.toLocaleTimeString()}<br/><br/>`
-
-                params.forEach(p => {
-                    const original = p.data[2]
-                    text += `${p.seriesName}: ${original.toFixed(2)}<br/>`
-                })
-
-                return text
-            }
-        },
-         dataZoom: [
-            { type: 'inside' },
-            { type: 'slider'}
-        ],
-    })
-}
-let oiChart = null;
-
-function initOIChart() {
-    const el = document.getElementById("oi-panel");
-    if (!el) return;
-
-    if (oiChart) oiChart.dispose();
-
-    oiChart = echarts.init(el);
-
-    oiChart.setOption({
-        backgroundColor: "#111",
-        tooltip: { trigger: "axis" },
-        legend: { data: ["Call OI", "Put OI"] },
-
-        xAxis: {
-            type: "category",
-            name: "Strike"
-        },
-
-        yAxis: {
-            type: "value",
-            name: "OI"
-        },
-
-        series: [
-            { name: "Call OI", type: "bar", data: [] },
-            { name: "Put OI", type: "bar", data: [] }
-        ]
-    });
-}
-function renderOI(rows) {
-    if (!oiChart || !rows) return;
-
-    const spot = currentSpot;
-    const range = spot * 0.20;
-
-    const filtered = rows.filter(r =>
-        !spot || Math.abs(r.strike - spot) <= range
-    );
-
-    const strikes = filtered.map(r => r.strike);
-
-    const callOI = filtered.map(r => r.ce_oi);
-    const putOI = filtered.map(r => r.pe_oi);
-
-    oiChart.setOption({
-        xAxis: { data: strikes },
-        series: [
-            { name: "Call OI", data: callOI },
-            { name: "Put OI", data: putOI }
-        ],
-        dataZoom: [
-            { type: 'inside' },
-            { type: 'slider', height: 25, bottom: 20 }
-        ],
-    });
-}
-let oiChangeChart = null;
-
-function initOIChangeChart() {
-    const el = document.getElementById("oi-change-panel");
-    if (!el) return;
-
-    if (oiChangeChart) oiChangeChart.dispose();
-
-    oiChangeChart = echarts.init(el);
-
-    oiChangeChart.setOption({
-        backgroundColor: "#111",
-        tooltip: { trigger: "axis" },
-        legend: { data: ["Call del-OI", "Put del-OI"] },
-
-        xAxis: {
-            type: "category",
-            name: "Strike"
-        },
-
-        yAxis: {
-            type: "value",
-            name: "del-OI"
-        },
-
-        series: [
-            { name: "Call del-OI", type: "bar", data: [] },
-            { name: "Put del-OI", type: "bar", data: [] }
-        ]
-    });
-}
-function renderOIChange(rows) {
-    if (!oiChangeChart || !rows) return;
-
-    const spot = currentSpot;
-    const range = spot * 0.20;
-
-    const filtered = rows.filter(r =>
-        !spot || Math.abs(r.strike - spot) <= range
-    );
-
-    const strikes = filtered.map(r => r.strike);
-
-    const callChange = filtered.map(r => r.ce_oi_change);
-    const putChange = filtered.map(r => r.pe_oi_change);
-
-    oiChangeChart.setOption({
-        xAxis: { data: strikes },
-        series: [
-            { name: "Call del-OI", data: callChange },
-            { name: "Put del-OI", data: putChange }
-        ],
-        dataZoom: [
-            { type: 'inside' },
-            { type: 'slider', height: 25, bottom: 20 }
-        ],
-    });
-}
 //---------------------------------
 //Helper Functions------------
 //---------------------------------
-function computeGammaFlip(gammaLadder) {
-    for (let i = 1; i < gammaLadder.length; i++) {
-        const prev = gammaLadder[i - 1];
-        const curr = gammaLadder[i];
 
-        if (prev.gex < 0 && curr.gex > 0) {
-            return curr.strike;
-        }
-    }
-    return null;
-}
-function extractOC(optionChain) {
-    return optionChain?.data?.data?.oc || {};
-}
-function normalizeOC(oc) {
-    const rows = [];
 
-    Object.entries(oc).forEach(([strikeStr, value]) => {
-        const strike = Number(strikeStr);
 
-        const ce = value.ce || {};
-        const pe = value.pe || {};
 
-        rows.push({
-            strike,
 
-            // EXISTING
-            ce_gamma: Number(ce.greeks?.gamma || 0),
-            pe_gamma: Number(pe.greeks?.gamma || 0),
 
-            ce_oi: Number(ce.oi || 0),
-            pe_oi: Number(pe.oi || 0),
 
-            // 🔥 ADD THIS
-            ce_oi_change: Number(ce.oi_change || ce.change_in_oi || ce.oi - ce.previous_oi || 0),
-            pe_oi_change: Number(pe.oi_change || pe.change_in_oi || pe.oi - pe.previous_oi || 0),
-
-            ce_vega: Number(ce.greeks?.vega || 0),
-            pe_vega: Number(pe.greeks?.vega || 0)
-        });
-    });
-
-    rows.sort((a, b) => a.strike - b.strike);
-
-    return rows;
-}
-    function computeGammaLadder(rows) {
-    return rows.map(r => {
-        const ce_gex = r.ce_gamma * r.ce_oi;
-        const pe_gex = -r.pe_gamma * r.pe_oi; // puts negative
-
-        return {
-            strike: r.strike,
-            gex: ce_gex + pe_gex
-        };
-    });
-}
-    function computeNetGEX(gammaLadder) {
-    return gammaLadder.reduce((sum, r) => sum + r.gex, 0);
-}
-function computeVegaLadder(rows) {
-    return rows.map(r => {
-        const ce_v = r.ce_vega * r.ce_oi;
-        const pe_v = r.pe_vega * r.pe_oi;
-
-        return {
-            strike: r.strike,
-            vega: ce_v + pe_v
-        };
-    });
-}
-function computeVegaSkew(rows) {
-    return rows.map(r => {
-        const net_oi = r.ce_oi - r.pe_oi
-        const v_skew = ((r.ce_vega + r.pe_vega)/2 ) * net_oi
-
-        return {
-            strike: r.strike,
-            vega: v_skew
-        };
-    });
-}
-function computeGEXGradient(gammaLadder) {
-    const gradient = [];
-
-    for (let i = 1; i < gammaLadder.length; i++) {
-        const prev = gammaLadder[i - 1];
-        const curr = gammaLadder[i];
-
-        const dGEX = curr.gex - prev.gex;
-        const dS = curr.strike - prev.strike;
-
-        gradient.push({
-            strike: curr.strike,
-            gradient: dGEX / dS
-        });
-    }
-
-    return gradient;
-}
-function processOptionChain(optionChain) {
-
-    // ----------------------------
-    // 1. Extract + Validate
-    // ----------------------------
-    const oc = extractOC(optionChain);
-    console.log('oc', oc);
-
-    if (!oc || Object.keys(oc).length === 0) {
-        return { valid: false };
-    }
-
-    const rows = normalizeOC(oc);
-
-    if (!rows || rows.length === 0) {
-        return { valid: false };
-    }
-
-    // ----------------------------
-    // 2. Core Calculations
-    // ----------------------------
-    const gammaLadder = computeGammaLadder(rows);
-    const netGEX = computeNetGEX(gammaLadder);
-    const vegaLadder = computeVegaLadder(rows);
-    const vegaSkew = computeVegaSkew(rows);
-    const gexGradient = computeGEXGradient(gammaLadder);
-
-    // ----------------------------
-    // 3. ADV (Notional Liquidity Proxy)
-    // ----------------------------
-    let rawADV = 0;
-
-    for (let i = 0; i < rows.length; i++) {
-        const r = rows[i];
-
-        const oi = (r.ce_oi || 0) + (r.pe_oi || 0);
-        rawADV += oi * r.strike;
-    }
-
-    // normalize by number of strikes
-    let adv = rawADV / rows.length;
-
-    // safety floor (critical)
-    adv = Math.max(adv, 1e6);
-
-    // ----------------------------
-    // 4. Data Quality Score (optional but powerful)
-    // ----------------------------
-    const confidence = Math.min(1, rows.length / 100);
-
-    // ----------------------------
-    // 5. Return Structured Result
-    // ----------------------------
-    return {
-        valid: true,
-
-        // core
-        rows,
-        gammaLadder,
-        netGEX,
-        gexGradient,
-        vegaLadder,
-        vegaSkew,
-
-        // 🔥 critical for RRP
-        adv,
-
-        // 🔥 optional upgrade
-        confidence
-    };
-}
 function extractIVData(apiResponse) {
 
     const oc = apiResponse?.data?.data?.oc
@@ -3411,595 +1974,8 @@ function extractIVData(apiResponse) {
 
     return { data: result, spot }
 }
-function computeIVStructure(ivData) {
 
-    const gradient = []
-    const curvature = []
 
-    for (let i = 0; i < ivData.length; i++) {
-
-        // Edge handling
-        if (i === 0 || i === ivData.length - 1) {
-            gradient.push(null)
-            curvature.push(null)
-            continue
-        }
-
-        const prev = ivData[i - 1]
-        const curr = ivData[i]
-        const next = ivData[i + 1]
-
-        const dK = next.strike - prev.strike
-
-        // 🔹 First derivative (central diff)
-        const grad = (next.iv - prev.iv) / dK
-
-        // 🔹 Second derivative (curvature)
-        const curv =
-            (next.iv - 2 * curr.iv + prev.iv) /
-            Math.pow(next.strike - curr.strike, 2)
-
-        gradient.push(grad)
-        curvature.push(curv)
-    }
-
-    return { gradient, curvature }
-}
-//----------------------------------
-//----Price microstructure charts-
-//-----------------------------------
-function initMicroChart() {
-    const el = document.getElementById("microChart");
-    if (!el) return;
-
-    if (microChart) microChart.dispose();
-
-    microChart = echarts.init(el);
-
-    microChart.setOption({
-        backgroundColor: "#111",
-        tooltip: { trigger: "axis" },
-
-        legend: { data: ["Microprice", "LTP"] },
-
-        xAxis: { type: "category", data: [] },
-        yAxis: { type: "value", scale: true },
-
-        series: [
-            { name: "Microprice", type: "line", data: [], smooth: true },
-            { name: "LTP", type: "line", data: [], smooth: true }
-        ],
-        dataZoom: [
-            { type: 'inside' },
-            { type: 'slider', height: 25, bottom: 30 }
-        ],
-    });
-}
-function initImbalanceChart() {
-    const el = document.getElementById("imbalanceChart");
-    if (!el) return;
-
-    if (imbalanceChart) imbalanceChart.dispose();
-
-    imbalanceChart = echarts.init(el);
-
-    imbalanceChart.setOption({
-        backgroundColor: "#111",
-        tooltip: { trigger: "axis" },
-
-        xAxis: { type: "category", data: [] },
-
-        yAxis: {
-            type: "value",
-            min: -1,
-            max: 1
-        },
-
-        series: [{
-            name: "Imbalance",
-            type: "line",
-            data: [],
-            smooth: true
-        }],
-        dataZoom: [
-            { type: 'inside' },
-            { type: 'slider', height: 25, bottom: 30 }
-        ],
-    });
-}
-function initFlowChart() {
-    const el = document.getElementById("flowChart");
-    if (!el) return;
-
-    if (flowChart) flowChart.dispose();
-
-    flowChart = echarts.init(el);
-
-    flowChart.setOption({
-        backgroundColor: "#111",
-        tooltip: { trigger: "axis" },
-
-        xAxis: { type: "category", data: [] },
-
-        yAxis: {
-            type: "value",
-
-        },
-
-        series: [{
-            name: "Flow",
-            type: "line",
-            data: [],
-            smooth: true
-        }],
-        dataZoom: [
-            { type: 'inside' },
-            { type: 'slider', height: 25, bottom: 30 }
-        ],
-    });
-}
-function initLBAChart() {
-    const el = document.getElementById("lbaChart");
-    if (!el) return;
-
-    if (lbaChart) lbaChart.dispose();
-
-    lbaChart = echarts.init(el);
-
-    lbaChart.setOption({
-        backgroundColor: "#111",
-        tooltip: { trigger: "axis" },
-
-        legend: { data: ["LTP", "Bid", "Ask"] },
-
-        xAxis: { type: "category", data: [] },
-        yAxis: { type: "value", scale: true },
-
-        series: [
-            { name: "LTP", type: "line", data: [], smooth: true },
-            { name: "Bid", type: "line", data: [], smooth: true },
-            { name: "Ask", type: "line", data: [], smooth: true }
-        ],
-        dataZoom: [
-            { type: 'inside' },
-            { type: 'slider', height: 25, bottom: 30 }
-        ],
-    });
-}
-function initRRPChart() {
-    const el = document.getElementById("rrpChart");
-    if (!el) return;
-
-    if (rrpChart) rrpChart.dispose();
-
-    rrpChart = echarts.init(el);
-
-    rrpChart.setOption({
-        backgroundColor: "#111",
-
-        grid: {
-            left: 40,
-            right: 20,
-            top: 20,
-            bottom: 80   // ✅ REQUIRED
-        },
-
-        tooltip: { trigger: "axis" },
-
-        xAxis: {
-            type: "category",
-            data: []
-        },
-
-        yAxis: {
-            type: "value",
-            min: 0,
-            max: 1
-        },
-
-        series: [{
-            name: "RRP",
-            type: "line",
-            data: [],
-            smooth: true
-        }],
-
-        dataZoom: [
-            {
-                type: 'inside'
-            },
-            {
-                type: 'slider',
-                height: 25,
-                bottom: 10   // inside grid now
-            }
-        ]
-    });
-}
-function renderRRP(series) {
-    if (!rrpChart) return;
-    if (rrpChart.isDisposed?.()) return;
-    if (!rrpChart._model) return;
-
-    if (!Array.isArray(series) || series.length === 0) return;
-
-    const x = [];
-    const y = [];
-
-    for (let i = 0; i < series.length; i++) {
-        const t = series[i]?.time;
-        const v = series[i]?.value;
-
-        // 🔥 HARD FILTER
-        if (!isFinite(v) || v == null) continue;
-
-        x.push(i);        // OR use time (see below)
-        y.push(v);
-    }
-
-    // 🚨 MUST MATCH
-    if (x.length === 0 || x.length !== y.length) return;
-
-    rrpChart.setOption({
-        xAxis: {
-            type: "category",
-            data: x
-        },
-        yAxis: {
-            type: "value",
-            min: 0,
-            max: 1
-        },
-        // ✅ TOOLTIP (UPGRADED)
-        tooltip: {
-            trigger: "axis",
-            axisPointer: {
-                type: "cross"
-            },
-            backgroundColor: "#222",
-            borderColor: "#555",
-            textStyle: {
-                color: "#fff"
-            },
-            formatter: function (params) {
-                const p = params[0];
-
-                const value = p.data;
-                const idx = p.dataIndex;
-
-                return `
-                    <b>Index:</b> ${idx}<br/>
-                    <b>RRP:</b> ${value.toFixed(4)}
-                `;
-            }
-        },
-        series: [{
-            name: "RRP",
-            type: "line",
-            data: y,
-            smooth: true
-        }],
-        dataZoom: [
-            { type: 'inside' },
-            { type: 'slider', height: 25, bottom: 20 }
-        ],
-    });
-}
-function updateMicroChart() {
-    if (!microChart || microChart.isDisposed?.()) return;
-    if (!microChart._model) return;
-
-    const len = marketBuffer.filled ? marketBuffer.size : marketBuffer.index;
-    if (len < 10) return;
-
-    const x = [];
-    const micro = [];
-    const ltp = [];
-
-    for (let i = 0; i < len; i++) {
-        const m = marketBuffer.microprice[i];
-        const l = marketBuffer.ltp[i];
-
-        // 🔥 STRICT VALIDATION
-        if (
-            m == null || l == null ||
-            !isFinite(m) || !isFinite(l)
-        ) continue;
-
-        x.push(i);
-        micro.push(m);
-        ltp.push(l);
-    }
-
-    // 🚨 HARD CHECK (CRITICAL)
-    if (
-        x.length === 0 ||
-        x.length !== micro.length ||
-        x.length !== ltp.length
-    ) return;
-
-    microChart.setOption({
-        xAxis: {
-            type: "category",
-            data: x
-        },
-        yAxis: {
-            type: "value",
-            scale: true   // 🔥 THIS is the key
-        },
-        series: [
-            {
-                name: "Microprice",
-                type: "line",
-                data: micro,
-                smooth: true
-            },
-            {
-                name: "LTP",
-                type: "line",
-                data: ltp,
-                smooth: true
-            }
-        ],
-
-        // ✅ FIXED TOOLTIP (IMPORTANT)
-        tooltip: {
-            trigger: "axis",
-            axisPointer: { type: "cross" },
-            backgroundColor: "#222",
-            borderColor: "#555",
-            textStyle: { color: "#fff" },
-            formatter: function (params) {
-
-                let microVal = null;
-                let ltpVal = null;
-
-                params.forEach(p => {
-                    if (p.seriesName === "Microprice") microVal = p.data;
-                    if (p.seriesName === "LTP") ltpVal = p.data;
-                });
-
-                return `
-                    <b>Index:</b> ${params[0].dataIndex}<br/>
-                    <b>Micro:</b> ${microVal?.toFixed(2)}<br/>
-                    <b>LTP:</b> ${ltpVal?.toFixed(2)}
-                `;
-            }
-        },
-
-        dataZoom: [
-            { type: 'inside' },
-            { type: 'slider', height: 25, bottom: 20 }
-        ]
-    });
-}
-function updateImbalanceChart() {
-    if (!imbalanceChart) return;
-    if (imbalanceChart.isDisposed?.()) return;
-    if (!imbalanceChart._model) return;
-
-    const len = marketBuffer.filled ? marketBuffer.size : marketBuffer.index;
-    if (len < 10) return;
-
-    const x = [];
-    const data = [];
-
-    for (let i = 0; i < len; i++) {
-        const v = marketBuffer.imbalance[i];
-
-        // 🔥 HARD FILTER (CRITICAL)
-        if (v == null || isNaN(v) || !isFinite(v)) continue;
-
-        x.push(i);
-        data.push(v);
-    }
-
-    // 🚨 MUST match lengths
-    if (data.length === 0 || x.length !== data.length) return;
-
-    imbalanceChart.setOption({
-        xAxis: {
-            type: "category",
-            data: x
-        },
-        yAxis: {
-            type: "value",
-            min: -1,
-            max: 1
-        },
-        // ✅ TOOLTIP (UPGRADED)
-        tooltip: {
-            trigger: "axis",
-            axisPointer: {
-                type: "cross"
-            },
-            backgroundColor: "#222",
-            borderColor: "#555",
-            textStyle: {
-                color: "#fff"
-            },
-            formatter: function (params) {
-                const p = params[0];
-
-                const value = p.data;
-                const idx = p.dataIndex;
-
-                return `
-                    <b>Index:</b> ${idx}<br/>
-                    <b>Imbalance:</b> ${value.toFixed(4)}
-                `;
-            }
-        },
-        series: [{
-            name: "Imbalance",
-            type: "line",
-            data: data,
-            smooth: true
-        }],
-        dataZoom: [
-            { type: 'inside' },
-            { type: 'slider', height: 25, bottom: 20 }
-        ],
-    });
-}
-function updateFlowChart() {
-    if (!flowChart) return;
-    if (flowChart.isDisposed?.()) return;
-    if (!flowChart._model) return;
-
-    const len = marketBuffer.filled ? marketBuffer.size : marketBuffer.index;
-    if (len < 10) return;
-
-    const x = [];
-    const data = [];
-
-    for (let i = 0; i < len; i++) {
-        const v = marketBuffer.flow[i];
-
-        // 🔥 HARD FILTER (CRITICAL)
-        if (v == null || isNaN(v) || !isFinite(v)) continue;
-
-        x.push(i);
-        data.push(v);
-    }
-
-    // 🚨 MUST match lengths
-    if (data.length === 0 || x.length !== data.length) return;
-
-    flowChart.setOption({
-        xAxis: {
-            type: "category",
-            data: x
-        },
-        yAxis: {
-            type: "value",
-
-        },
-        // ✅ TOOLTIP (UPGRADED)
-        tooltip: {
-            trigger: "axis",
-            axisPointer: {
-                type: "cross"
-            },
-            backgroundColor: "#222",
-            borderColor: "#555",
-            textStyle: {
-                color: "#fff"
-            },
-            formatter: function (params) {
-                const p = params[0];
-
-                const value = p.data;
-                const idx = p.dataIndex;
-
-                return `
-                    <b>Index:</b> ${idx}<br/>
-                    <b>Flow:</b> ${value.toFixed(4)}
-                `;
-            }
-        },
-        series: [{
-            name: "Flow",
-            type: "line",
-            data: data,
-            smooth: true
-        }],
-        dataZoom: [
-            { type: 'inside' },
-            { type: 'slider', height: 25, bottom: 20 }
-        ],
-    });
-}
-function updateLBAChart() {
-    if (!lbaChart) return;
-    if (lbaChart.isDisposed?.()) return;
-    if (!lbaChart._model) return;
-
-    const len = marketBuffer.filled ? marketBuffer.size : marketBuffer.index;
-    if (len < 10) return;
-
-    const x = [];
-    const ltp = [];
-    const bid = [];
-    const ask = [];
-
-    for (let i = 0; i < len; i++) {
-        const l = marketBuffer.ltp[i];
-        const b = marketBuffer.bid[i];
-        const a = marketBuffer.ask[i];
-
-        // 🔥 HARD FILTER (ALL SERIES MUST BE VALID TOGETHER)
-        if (
-            l == null || b == null || a == null ||
-            !isFinite(l) || !isFinite(b) || !isFinite(a)
-        ) continue;
-
-        x.push(i);
-        ltp.push(l);
-        bid.push(b);
-        ask.push(a);
-    }
-
-    // 🚨 CRITICAL: ALL SERIES MUST MATCH LENGTH
-    if (
-        x.length === 0 ||
-        x.length !== ltp.length ||
-        x.length !== bid.length ||
-        x.length !== ask.length
-    ) return;
-
-    lbaChart.setOption({
-        xAxis: {
-            type: "category",
-            data: x
-        },
-        yAxis: {
-            type: "value",
-            scale: true
-        },
-         // ✅ LEGEND
-        legend: {
-            data: ["LTP", "Best Bid", "Best Ask"],
-            top: 10,
-            textStyle: {
-                color: "#DDD"
-            }
-        },
-         // ✅ TOOLTIP (VERY IMPORTANT)
-        tooltip: {
-            trigger: "axis",
-            axisPointer: {
-                type: "cross"
-            },
-            backgroundColor: "#222",
-            borderColor: "#555",
-            textStyle: {
-                color: "#fff"
-            },
-            formatter: function (params) {
-                let output = "";
-
-                params.forEach(p => {
-                    const name = p.seriesName;
-                    const value = p.data;
-
-                    output += `<b>${name}:</b> ${value?.toFixed?.(2) ?? value}<br/>`;
-                });
-
-                return output;
-            }
-        },
-        series: [
-            { name: "LTP", type: "line", data: ltp },
-            { name: "Bid", type: "line", data: bid },
-            { name: "Ask", type: "line", data: ask }
-        ],
-        dataZoom: [
-            { type: 'inside' },
-            { type: 'slider', height: 25, bottom: 20 }
-        ],
-    });
-}
 //RRP Model
 function computeRRPFromRealtime(data) {
 
@@ -4010,6 +1986,7 @@ function computeRRPFromRealtime(data) {
     // =========================
     const vwap = data.vwap || data.gammaFlip || spot;
     const netGEX = data.netGEX || 0;
+
 
     // -------------------------
     // VOL (you may already compute this)
@@ -4053,127 +2030,20 @@ function computeRRPFromRealtime(data) {
     });
 }
 //Alpha Chart
-function initAlphaChart() {
-    const el = document.getElementById("alpha-panel");
-    if (!el) return;
 
-    if (alphaChart) alphaChart.dispose();
 
-    alphaChart = echarts.init(el);
 
-    alphaChart.setOption({
-        backgroundColor: "#111",
-        grid: { left: 40, right: 20, top: 20, bottom: 30 },
-
-        tooltip: { trigger: "axis" },
-
-        xAxis: {
-            type: "category",
-            data: []
-        },
-
-        yAxis: {
-            type: "value"
-        },
-
-        series: [{
-            name: "Alpha",
-            type: "line",
-            data: [],
-            smooth: true
-        }],
-        dataZoom: [
-            { type: 'inside' },
-            { type: 'slider', height: 25, bottom: 30 }
-        ],
-    });
-}
-function computeAlphaSeries() {
-    const size = marketBuffer.size;
-    const len = marketBuffer.filled ? size : marketBuffer.index;
-
-    const alpha = [];
-
-    for (let i = 0; i < len; i++) {
-
-        const micro = marketBuffer.microprice[i];
-        const prev = i > 10 ? marketBuffer.microprice[i - 10] : micro;
-
-        const trend = micro - prev;
-        const imbalance = marketBuffer.imbalance[i] || 0;
-
-        // 🔥 SCALE IT
-        const signal = (0.6 * trend + 0.4 * imbalance) * 1000;
-
-        alpha.push(signal);
-    }
-
-    return alpha;
-}
-function updateAlphaChart() {
-    if (!alphaChart) return;
-
-    // 🔥 CRITICAL FIX
-    if (alphaChart.isDisposed?.()) return;
-
-    // 🔥 ADD THIS (VERY IMPORTANT)
-    if (!alphaChart._model) return;
-
-    const len = marketBuffer.filled ? marketBuffer.size : marketBuffer.index;
-    if (len < 20) return;
-
-    const x = Array.from({ length: len }, (_, i) => i);
-    const alphaSeries = computeAlphaSeries();
-
-    alphaChart.setOption({
-        xAxis: { type: "category", data: x },
-        yAxis: { type: "value" },
-        series: [{
-            name: "Alpha",
-            type: "line",
-            data: alphaSeries,
-            smooth: true
-        }],
-         // ✅ TOOLTIP (UPGRADED)
-        tooltip: {
-            trigger: "axis",
-            axisPointer: {
-                type: "cross"
-            },
-            backgroundColor: "#222",
-            borderColor: "#555",
-            textStyle: {
-                color: "#fff"
-            },
-            formatter: function (params) {
-                const p = params[0];
-
-                const value = p.data;
-                const idx = p.dataIndex;
-
-                return `
-                    <b>Index:</b> ${idx}<br/>
-                    <b>Alpha:</b> ${value.toFixed(4)}
-                `;
-            }
-        },
-        dataZoom: [
-            { type: 'inside' },
-            { type: 'slider', height: 25, bottom: 20 }
-        ],
-    });
-}
 let alphaLoop = null;
 
 function startAlphaLoop() {
     if (alphaLoop) return;
 
     alphaLoop = setInterval(() => {
-        updateAlphaChart();
-        updateMicroChart();       // 🔥 ADD
-        updateImbalanceChart();   // 🔥 ADD
-        updateFlowChart();
-        updateLBAChart();
+        updateAlphaChart(marketBuffer);
+        updateMicroChart(marketBuffer);       // 🔥 ADD
+        updateImbalanceChart(marketBuffer);   // 🔥 ADD
+        updateFlowChart(marketBuffer);
+        updateLBAChart(marketBuffer);
     }, 100); // 10 FPS
 }
 function stopAlphaLoop() {
@@ -4213,8 +2083,8 @@ function computeBeta() {
             logdP.push(Math.log(dP + EPS));
         }
     }
-    console.log('logI:', logI)
-    console.log('logdP:', logdP)
+//    console.log('logI:', logI)
+//    console.log('logdP:', logdP)
 
     // minimum data requirement
     if (logI.length < 8) return null;
@@ -4356,7 +2226,6 @@ function getMarketRegime(beta, phi) {
         renderUniverseUI,
         updateCandle,
         startRealtime,
-        startRealtimeFake,
         stopRealtime,
         stopQuotePolling,
         destroy
