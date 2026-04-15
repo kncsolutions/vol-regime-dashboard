@@ -1,6 +1,7 @@
 import { FeatureEngine } from "../scripts/models/FeatureEngine.js";
 import { RRPModel } from "../scripts/models/RRPModel.js";
 import { GammaEngine } from "../scripts/engines/GammaEngine.js";
+import { ReflexivityEngine } from "../scripts/engines/ReflexivityEngine.js";
 import { GammaEncoder } from "../scripts/encoders/GammaEncoder.js";
 import { VolEngine } from "../scripts/engines/VolEngine.js";
 import { marketBuffer, updateMarketBuffer, resetMarketBuffer } from "../scripts/buffers/marketBuffer.js";
@@ -31,6 +32,21 @@ computeVegaLadder, computeVegaSkew} from "../scripts/services/optionChainService
 
 import {getGammaRegime} from "../scripts/logics/gammaState.js";
 
+import {reflexivityState} from "../scripts/buffers/reflexivityState.js"
+import {rrpSeries} from "../scripts/buffers/rrpSeries.js"
+
+import {computeHVFromSpotPrevClose} from "../scripts/services/hvService.js"
+
+
+import { computeI1 } from "../scripts/utils/instability.js";
+import { I1Buffer,pushI1 } from "../scripts/buffers/I1Buffer.js";
+
+import {I1Chart, initI1Chart, updateI1Chart} from "../scripts/uicomponents/linearInstabilityI1Chart.js"
+
+//import { WebSocketManager } from "../scripts/core/websocket/WebSocketManager.js";
+
+
+
 const RealtimeRenderer = (() => {
 
     let chart = null
@@ -44,6 +60,9 @@ const RealtimeRenderer = (() => {
     let activeTimeframe = "1d"
 
     let ws = null;
+//    const wsManager = new WebSocketManager("ws://localhost:8001/ws");
+//    wsManager.connect();
+
     let currentSecurityId = null;
     let socketSecurityId = null;
     let currentSecurityName = null;
@@ -54,28 +73,15 @@ const RealtimeRenderer = (() => {
     let currentSpot = null;
     let prevClose = null;
     let quoteInterval = null;
-
-
-    // =========================
-    // RRP ENGINE INSTANCE
-    // =========================
-    // =========================
-    // GLOBAL MARKET STATE
-    // =========================
+    let isTimeframeSwitching = false;
 
     const featureEngine = new FeatureEngine();
     const rrpModel = new RRPModel();
+    const reflexivityEngine = new ReflexivityEngine();
 
-    const rrpSeries = [];
 
-    const reflexivityState = {
-    I_series: [],
-    price_series:[],
-    dI_series: [],
-    beta_series: [],
-    phi_series: [],
-    window: 20
-        };
+
+
 
     const gammaEngine = new GammaEngine();
     const gammaEncoder = new GammaEncoder();
@@ -100,16 +106,27 @@ const RealtimeRenderer = (() => {
         console.log("TF changed:", activeTimeframe)
 
         // reload current stock
+//        if (activeStock) {
+//         setActiveStock(activeStock);
+//         // updateActiveStockTf(activeStock);
+//        }
         if (activeStock) {
-            setActiveStock(activeStock)
-        }
+            isTimeframeSwitching = true;
+
+                updateTimeframeOnly(activeStock);
+
+                setTimeout(() => {
+                    isTimeframeSwitching = false;
+                }, 500);
+//                updateTimeframeOnly(activeStock);
+            }
     }
 })
 
     //--------------------------------------------------
     // 🧱 INIT CHART
     //--------------------------------------------------
-function initRealtimeChart(containerId) {
+    function initRealtimeChart(containerId) {
 
 
     container = document.getElementById(containerId)
@@ -164,15 +181,21 @@ function initRealtimeChart(containerId) {
             });
 
     });
-    initNetGEXChart("netgex-panel");
-    initIVStructureChart("iv-structure-detailed");
-    initMicroChart("microChart");
-    initImbalanceChart("imbalanceChart");
-    initFlowChart("flowChart");
-    initLBAChart("lbaChart");
-    initAlphaChart("alpha-panel");   // 🔥 ADD THIS
-    initRRPChart("rrpChart");   // ✅ ADD THIS
+    attachOtherChartsSetOne();
 }
+
+    function attachOtherChartsSetOne(){
+        initNetGEXChart("netgex-panel");
+        initIVStructureChart("iv-structure-detailed");
+        initMicroChart("microChart");
+        initImbalanceChart("imbalanceChart");
+        initFlowChart("flowChart");
+        initLBAChart("lbaChart");
+        initAlphaChart("alpha-panel");   // 🔥 ADD THIS
+        initI1Chart("ioneChart");
+        initRRPChart("rrpChart");   // ✅ ADD THIS
+    }
+
 function updateLTPLine(ltp) {
 
     if (!ltpLine || !ltp) return
@@ -181,6 +204,7 @@ function updateLTPLine(ltp) {
         price: ltp
     })
 }
+
 function drawGammaFlip(flipPrice) {
     if (!candleSeries || !flipPrice) return;
 
@@ -206,29 +230,29 @@ function drawGammaFlip(flipPrice) {
 
 }
 
-function prepareGEXHistogram(gammaLadder) {
-    return gammaLadder.map(d => ({
-        x: d.strike,
-        y: d.gex
-    }));
-}
-function findClosestStrike(gammaLadder, spot) {
-    return gammaLadder.reduce((prev, curr) =>
-        Math.abs(curr.strike - spot) < Math.abs(prev.strike - spot)
-            ? curr
-            : prev
-    );
-}
-function computeConvexity(gexGradient) {
-    return gexGradient.reduce((sum, g) => sum + Math.abs(g.gradient), 0);
-}
-function computeAmplification(netGEX) {
-    return netGEX < 0 ? "HIGH" : "LOW";
-}
+//function prepareGEXHistogram(gammaLadder) {
+//    return gammaLadder.map(d => ({
+//        x: d.strike,
+//        y: d.gex
+//    }));
+//}
+//function findClosestStrike(gammaLadder, spot) {
+//    return gammaLadder.reduce((prev, curr) =>
+//        Math.abs(curr.strike - spot) < Math.abs(prev.strike - spot)
+//            ? curr
+//            : prev
+//    );
+//}
+//function computeConvexity(gexGradient) {
+//    return gexGradient.reduce((sum, g) => sum + Math.abs(g.gradient), 0);
+//}
+//function computeAmplification(netGEX) {
+//    return netGEX < 0 ? "HIGH" : "LOW";
+//}
     //--------------------------------------------------
     // 📊 DATA
     //--------------------------------------------------
-    function setInitialData(data) {
+  function setInitialData(data) {
         if (!candleSeries) return
         candleSeries.setData(data)
     }
@@ -237,6 +261,26 @@ function computeAmplification(netGEX) {
         if (!candleSeries) return
         candleSeries.update(candle)
     }
+
+    async function updateTimeframeOnly(symbol) {
+        const stock = stockMap[symbol];
+        if (!stock) return;
+
+        const security_id = stock.security_id;
+
+        stopQuotePolling();   // OK
+        stopCandlePolling();  // optional
+
+        // ❗ DO NOT reset buffers
+
+        await resolveHistOhlc({
+            symbol,
+            security_id,
+            lotSize: stock.lotSize
+        });
+
+        // restart candle polling if needed
+}
 
     //--------------------------------------------------
     // 🔁 REALTIME
@@ -264,12 +308,6 @@ function computeAmplification(netGEX) {
 
 
 
-///GEX Buffer
-
-
-
-//Web Socket
-//let ws = null;
 
 function getMicropriceTrend(lookback = 10) {
     const size = marketBuffer.size;
@@ -491,40 +529,7 @@ function buildVolSnapshot(ocPayload) {
         strikes
     }
 }
-function computeHVFromSpotPrevClose(spot, prevClose, currentTimestamp, marketOpenTimestamp) {
-    console.log('spot, prevClose, currentTimestamp, marketOpenTimestamp', spot, prevClose, currentTimestamp, marketOpenTimestamp)
 
-    if (!spot || !prevClose || spot <= 0 || prevClose <= 0) return null
-    console.log('here')
-
-    // =========================
-    // 1. LOG RETURN
-    // =========================
-    const r = Math.log(spot / prevClose)
-
-    // =========================
-    // 2. TIME FRACTION
-    // =========================
-    const elapsedMs = currentTimestamp - marketOpenTimestamp
-
-    if (!elapsedMs || elapsedMs <= 0) return null
-
-    const elapsedSeconds = elapsedMs / 1000
-
-    // Indian market ~ 6.25 hours
-    const SECONDS_PER_DAY = 6.25 * 3600
-
-    const t = elapsedSeconds / SECONDS_PER_DAY
-
-    if (t <= 0) return null
-
-    // =========================
-    // 3. ANNUALIZED HV
-    // =========================
-    const hv = Math.abs(r) / Math.sqrt(t) * Math.sqrt(252)
-
-    return hv * 100
-}
 
 function extractVolFeatures(timestamp, snapshot, marketBuffer) {
     let spot = snapshot.spot
@@ -934,6 +939,9 @@ function startWebSocket() {
         // ✅ Keep ONLY ONE check (you had duplicate)
         if (String(data.securityId) !== String(socketSecurityId)) return;
         updateMarketBuffer(data);
+        const I1 = computeI1(marketBuffer, 50);
+        pushI1(I1, data.ltt * 1000);
+//        console.log('i1 buffer :', I1Buffer);
 
         handleTick(data);
 //        console.log("WS tick", data.ltp, marketBuffer.index);
@@ -1049,6 +1057,7 @@ function onCandleClose(candle) {
 
     console.log("🕒 Candle closed:", candle, "TF:", activeTimeframe);
     console.log("🕒 Candle closed:", candle);
+    if (isTimeframeSwitching) return; // 🔥 prevent trigger
 
     // 🔥 run heavy logic here
     updateOptionChain(activeStock, currentSecurityId);
@@ -1141,19 +1150,34 @@ function renderUniverseUI(stocks) {
         setActiveStock(selected)
     }
 }
-
-function setActiveStock(symbol) {
-//    currentSpot = null;
+function updateActiveStockTf(symbol) {
     stopSafeUpdateLoop(); // 🔥 prevent leak
     stopQuotePolling();
     stopAlphaLoop();          // ✅ ADD
-//    resetSocketCharts();      // ✅ ADD
+
+    // 👇 This is your real pipeline trigger
+    resolveHistOhlc({
+        symbol,
+        security_id,
+        lotSize
+    })
+     startSafeUpdateLoop({
+        symbol,
+        security_id,
+        interval: 0.1 * 60 * 1000 // N minutes
+    })
+
+}
+
+function setActiveStock(symbol) {
+    stopSafeUpdateLoop(); // 🔥 prevent leak
+    stopQuotePolling();
+    stopAlphaLoop();          // ✅ ADD
     resetMarketBuffer();
     resetGammaBuffer();
     resetVolFeatureBuffer();
     resetIVStructureChart();
     resetNetGEXBuffer();   // ✅ ADD THIS
-//    resetReflexivityState()
 
 
     const input = document.getElementById("stockSelectchart")
@@ -1183,7 +1207,7 @@ function setActiveStock(symbol) {
      startSafeUpdateLoop({
         symbol,
         security_id,
-        interval: 0.1 * 60 * 1000 // N minutes
+        interval: 1 * 60 * 1000 // N minutes
     })
 
 }
@@ -1324,6 +1348,17 @@ async function updateOptionChain(symbol, security_id) {
         lastGEXGradient = result.gexGradient;
 
         const ivData = extractIVData(ocToUse);
+        const reflex = reflexivityEngine.update({
+            netGEX: result.netGEX,
+            spot: currentSpot,
+            flow: getFlowSignals(),
+            timestamp: ts
+        });
+        console.log("Reflexivity:", reflex);
+
+        if (reflex) {
+            console.log("Reflexivity:", reflex);
+        }
         const { beta, phi } = updateReflexivityMetrics(result);
 
         const crashRisk = computeCrashRisk(beta, phi, result.netGEX);
@@ -1493,32 +1528,15 @@ function updateMarketState(result) {
     marketState.adv = result.adv || 1e7;
 }
 
-async function loadStockforCharting({ symbol, security_id, lotSize }) {
-    if (isLoading) {
-        console.warn("⏳ Skipping duplicate load");
-        return;
-    }
-
-    const currentRequest = ++requestId;
-
+async function resolveHistOhlc({ symbol, security_id, lotSize }){
     const params = new URLSearchParams({
         underlying_security: symbol,
         tf: activeTimeframe
     });
-
-    try {
-        changeSecurity(security_id, symbol);
-        console.log("📡 Loading:", symbol, activeTimeframe);
-
-        const [histRes, ocRes] = await Promise.all([
-            authFetch(`${API}/historical/${security_id}?${params}`),
-            authFetch(`${API}/option-chain/${security_id}?${params}`)
-        ]);
-        const historical = await histRes.json();
-         // ----------------------------
-        // ✅ ALWAYS RENDER CHART
-        // ----------------------------
-        if (historical.status === "success" || ("close" in historical)) {
+    try{
+    const histRes = await authFetch(`${API}/historical/${security_id}?${params}`);
+    const historical = await histRes.json();
+    if (historical.status === "success" || ("close" in historical)) {
 
             console.log("hist data fetched");
 
@@ -1528,28 +1546,28 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
                 renderChart(historical, activeTimeframe, security_id,  symbol);
             }
         }
-        startWebSocket();
-        startAlphaLoop();
+        }catch (e) {
+        console.error("❌ loadStock error:", e);
+    }
 
+}
+async function resolveOC({ symbol, security_id, lotSize}){
+    const params = new URLSearchParams({
+        underlying_security: symbol,
+        tf: activeTimeframe
+    });
+    const currentRequest = ++requestId;
+    try{
+        const [ocRes] = await Promise.all([
+            authFetch(`${API}/option-chain/${security_id}?${params}`)
+        ]);
         const optionChain = await ocRes.json();
-
-
-
-
-
-        // ----------------------------
-        // ✅ OPTION CHAIN HANDLING
-        // ----------------------------
         let ocToUse = null;
 
         if (isValidOC(optionChain)) {
             lastValidOC = optionChain;
             ocToUse = optionChain;
 
-
-            //console.log("OC KEYS:",
-             //   Object.keys(optionChain?.data?.data?.oc || {})
-            //);
 
         } else {
             console.warn("⚠️ Invalid OC, using last valid");
@@ -1560,22 +1578,30 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
                 ocToUse = lastValidOC;
             }
         }
-
-        // 🔥 Process only if we have valid OC
+         // 🔥 Process only if we have valid OC
         if (ocToUse) {
                 const result = processOptionChain(ocToUse);
-
                 const flip = computeGammaFlip(result.gammaLadder);
 
                 lastGammaLadder = result.gammaLadder;
-            //    lastGammaLadder = result.gammaLadder;
-
                 updateGEXTitle(result.gammaLadder);
                 lastGEXGradient = result.gexGradient;
+
                 const ivData = extractIVData(ocToUse);
                 updateMarketState(result);
                 const ts = Date.now();
                 const flow = getFlowSignals();
+                const reflex = reflexivityEngine.update({
+                netGEX: result.netGEX,
+                spot: currentSpot,
+                flow: getFlowSignals(),
+                timestamp: ts
+            });
+            console.log("Reflexivity:", reflex);
+
+            if (reflex) {
+                console.log("Reflexivity:", reflex);
+            }
 
                 const gammaState = gammaEngine.computeState({
                     result,
@@ -1585,57 +1611,9 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
                     flow   // 🔥 NEW
                 });
 
-//                console.log("Gamma State:", gammaState);
+                console.log("Gamma State:", gammaState);
                 const gammaVector = gammaEncoder.encode(gammaState);
-
-//                console.log("Gamma Vector:", gammaVector);
                 updateGammaBuffer(ts, gammaState, gammaVector);
-
-
-//               // 🔥 NEW PIPELINE
-//               const volState = processVolatilitySnapshot({
-//                ocPayload: {
-//                    ts,
-//                    last_price: currentSpot,
-//                    oc: ocToUse
-//                        },
-//                        marketBuffer,
-//                        volFeatureBuffer,
-//                        volEngine
-//                    })
-
-//                    if (volState) {
-//                        console.log("Vol State:", volState)
-//                    }
-//                    updateNetGEXBuffer(netGEXBuffer, {
-//                            timestamp: ts,
-//                            net_gex: result.netGEX,
-//                            call_gex: result.gammaLadder
-//                                .filter(x => x.gex > 0)
-//                                .reduce((s, x) => s + x.gex, 0),
-//
-//                            put_gex: result.gammaLadder
-//                                .filter(x => x.gex < 0)
-//                                .reduce((s, x) => s + x.gex, 0),
-//
-//                            gamma_flip: flip,
-//                            spot: currentSpot
-//                        });
-//                    updateNetGEXChart(netGEXBuffer);
-
-//               const { beta, phi } = updateReflexivityMetrics(result);
-//
-//                const crashRisk = computeCrashRisk(beta, phi, result.netGEX);
-//
-//                const regime_from_beta = getMarketRegime(beta, phi);
-//
-//
-//
-//                console.log("β:", beta, "φ:", phi, "Risk:", crashRisk, regime_from_beta);
-
-
-
-
 
                 // 🔥 DELAY DRAWING
                 setTimeout(() => {
@@ -1657,22 +1635,40 @@ async function loadStockforCharting({ symbol, security_id, lotSize }) {
 
                 }, 0);
 
-    const regime = getGammaRegime(currentSpot, flip);
+                const regime = getGammaRegime(currentSpot, flip);
 
-    console.log("Regime:", regime);
-     // 🔥 Ignore stale responses
-        if (currentRequest !== requestId) {
-            console.warn("⚠️ Stale response ignored");
-            return;
+                console.log("Regime:", regime);
+             // 🔥 Ignore stale responses
+                if (currentRequest !== requestId) {
+                    console.warn("⚠️ Stale response ignored");
+                    return;
+                }
         }
+
+        }catch (e) {
+        console.error("❌ loadStock error:", e);
+    }
+
 }
+function connectToSocket(){
+       startWebSocket();
+       startAlphaLoop();
+}
+async function loadStockforCharting({ symbol, security_id, lotSize }) {
+    if (isLoading) {
+        console.warn("⏳ Skipping duplicate load");
+        return;
+    }
+    const currentRequest = ++requestId;
 
-
-        // ----------------------------
-//        startWebSocket();
+    try {
+        changeSecurity(security_id, symbol);
+        console.log("📡 Loading:", symbol, activeTimeframe);
+        resolveHistOhlc({ symbol, security_id, lotSize });
+        startWebSocket();
+        startAlphaLoop();
+        resolveOC({ symbol, security_id, lotSize});
         resetRealtimeState();
-
-
     } catch (e) {
         console.error("❌ loadStock error:", e);
     }
@@ -1859,9 +1855,7 @@ function startQuotePolling({security_id, symbol, candles, interval = 5000 }) {
                 timestamp: Date.now() / 1000
             });
 
-            // 🔥 OPTIONAL: trigger updates
-            // updateIVChart(currentSpot)
-            // updateGammaChart(currentSpot)
+
 
         } catch (err) {
             console.error("Quote fetch error:", err)
@@ -1904,31 +1898,6 @@ function destroy() {
 
         window.removeEventListener("resize", resizeChart)
     }
-
- //----------------------------------
- //----Other Charts----------
- //-------------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
-//---------------------------------
-//Helper Functions------------
-//---------------------------------
-
-
-
-
-
 
 
 function extractIVData(apiResponse) {
@@ -2044,6 +2013,7 @@ function startAlphaLoop() {
         updateImbalanceChart(marketBuffer);   // 🔥 ADD
         updateFlowChart(marketBuffer);
         updateLBAChart(marketBuffer);
+        updateI1Chart(I1Buffer);
     }, 100); // 10 FPS
 }
 function stopAlphaLoop() {
@@ -2131,7 +2101,9 @@ function computePhi(dataPoint) {
     return Math.min(1, oiFlow / gammaFlow);
 }
 function updateReflexivityMetrics(data) {
-    if (currentSpot == null) return;
+    if (currentSpot == null) {
+        return { beta: null, phi: null };  // ✅ FIX
+    }
 
     const I = Math.abs(data.netGEX || 0);  // your gamma exposure
     const P = currentSpot;
@@ -2221,6 +2193,7 @@ function getMarketRegime(beta, phi) {
     //--------------------------------------------------
     return {
         initRealtimeChart,
+        attachOtherChartsSetOne,
         setInitialData,
         initSearch,
         renderUniverseUI,

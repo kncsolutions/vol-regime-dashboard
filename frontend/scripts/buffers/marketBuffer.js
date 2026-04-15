@@ -65,6 +65,7 @@ export const marketBuffer = {
     flow: new Array(1000),        
     // Signed order flow proxy:
     // imbalance * traded quantity (ltq)
+    returns: new Float64Array(1000),   // 🔥 ADD THIS
 
     // --------------------------------------------------
     // ⏱️ TIME
@@ -109,6 +110,7 @@ export function updateMarketBuffer(data) {
         marketBuffer.microprice[i] = marketBuffer.microprice[i + 1];
         marketBuffer.imbalance[i] = marketBuffer.imbalance[i + 1];
         marketBuffer.flow[i] = marketBuffer.flow[i + 1];
+        marketBuffer.returns[i] = marketBuffer.returns[i + 1];
         marketBuffer.timestamp[i] = marketBuffer.timestamp[i + 1];
     }
 
@@ -122,6 +124,19 @@ export function updateMarketBuffer(data) {
     marketBuffer.microprice[last] = micro;
     marketBuffer.imbalance[last] = imbalance;
     marketBuffer.flow[last] = flow;
+    // 🔹 Compute return
+    if (last > 0 && marketBuffer.ltp[last - 1]) {
+        const prev = marketBuffer.ltp[last - 1];
+        const curr = marketBuffer.ltp[last];
+
+        // Option 1: Log return (recommended)
+        marketBuffer.returns[last] = Math.log(curr / prev);
+
+        // Option 2: Simple return (if needed)
+        // marketBuffer.returns[last] = (curr - prev) / prev;
+    } else {
+        marketBuffer.returns[last] = 0;
+    }
     marketBuffer.timestamp[last] = data.ltt;
 
     // 🟢 mark filled

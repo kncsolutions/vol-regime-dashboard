@@ -69,18 +69,21 @@ export function updateIVStructureChart(features) {
     // =========================
     // 🔥 NORMALIZATION
     // =========================
-    const atm_iv_norm = features.atm_iv / 20
-    const hv_norm = isFinite(features.hv) ? features.hv / 20 : null
-    const skew_norm = features.skew
-    const curvature_norm = features.curvature / 10
-    const call_skew_norm = features.call_skew / 100
-    const put_skew_norm = features.put_skew / 100
+    const safe = (v, scale = 1) =>
+    isFinite(v) ? v / scale : NaN
 
+    const atm_iv_norm = safe(features.atm_iv, 20)
+    const hv_norm = safe(features.hv, 20)
+    const skew_norm = safe(features.skew, 1)
+    const curvature_norm = safe(features.curvature, 10)
+    const call_skew_norm = safe(features.call_skew, 100)
+    const put_skew_norm = safe(features.put_skew, 100)
     // =========================
     // STORE: [time, normalized, original]
     // =========================
+    const safeOriginal = (v) => isFinite(v) ? v : null
     ivData.push([t, atm_iv_norm, features.atm_iv])
-    hvData.push([t, hv_norm, features.hv])
+    hvData.push([t, hv_norm, safeOriginal(features.hv)])
     skewData.push([t, skew_norm, features.skew])
     curvatureData.push([t, curvature_norm, features.curvature])
     callSkewData.push([t, call_skew_norm, features.call_skew])
@@ -135,19 +138,29 @@ export function updateIVStructureChart(features) {
                 data: putSkewData
             }
         ],
-                tooltip: {
+          tooltip: {
             trigger: "axis",
             formatter: function (params) {
-                const time = new Date(params[0].value[0])
-                let text = `${time.toLocaleTimeString()}<br/><br/>`
+            if (!params || params.length === 0) return "";
 
-                params.forEach(p => {
-                    const original = p.data[2]
-                    text += `${p.seriesName}: ${original.toFixed(2)}<br/>`
-                })
+            const timeVal = params[0]?.value?.[0];
+            const time = timeVal ? new Date(timeVal) : null;
 
-                return text
-            }
+            let text = `${time ? time.toLocaleTimeString() : "N/A"}<br/><br/>`;
+
+            params.forEach(p => {
+                const original = p?.data?.[2];
+
+                // ✅ HARD GUARD (bulletproof)
+                if (typeof original !== "number" || !isFinite(original)) {
+                    text += `${p.seriesName}: N/A<br/>`;
+                } else {
+                    text += `${p.seriesName}: ${original.toFixed(2)}<br/>`;
+                }
+            });
+
+    return text;
+}
         },
          dataZoom: [
             { type: 'inside' },

@@ -4023,7 +4023,9 @@ function switchTab(tabId, el) {
     if (!isRealtimeInitialized) {
 
         RealtimeRenderer.initRealtimeChart("realtimeChartContainer")
+
         loadStocksFromAPI()
+
         RealtimeRenderer.initSearch(universe)
 
         isRealtimeInitialized = false;
