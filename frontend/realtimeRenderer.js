@@ -43,10 +43,33 @@ import { I1Buffer,pushI1 } from "../scripts/buffers/I1Buffer.js";
 
 import {I1Chart, initI1Chart, updateI1Chart} from "../scripts/uicomponents/linearInstabilityI1Chart.js"
 
+import { ImpactEngine } from "../scripts/engines/ImpactEngine.js";
 //import { WebSocketManager } from "../scripts/core/websocket/WebSocketManager.js";
 
+import {
+    initImpactChart,
+    updateImpactChart,
+    resetImpactChart
+} from "../scripts/uicomponents/impactChart.js";
+import { LiquidityEngine } from "../scripts/engines/LiquidityEngine.js";
+import {
+    initLiquidityChart,
+    updateLiquidityChart,
+    resetLiquidityChart
+} from "../scripts/uicomponents/liquidityChart.js";
 
-
+import { PositionSizingEngine } from "../scripts/engines/PositionSizingEngine.js";
+import {
+    initPositionSizingChart,
+    updatePositionSizingChart,
+    resetPositionSizingChart
+} from "../scripts/uicomponents/positionSizingChart.js";
+import { RegimeEngine } from "../scripts/engines/RegimeEngine.js";
+import { DecisionPolicy} from "../scripts/engines/DecisionPolicy.js";
+import {
+    initRegimeRiskChart,
+    updateRegimeRiskChart
+} from "../scripts/uicomponents/regimeRiskChart.js";
 const RealtimeRenderer = (() => {
 
     let chart = null
@@ -78,6 +101,12 @@ const RealtimeRenderer = (() => {
     const featureEngine = new FeatureEngine();
     const rrpModel = new RRPModel();
     const reflexivityEngine = new ReflexivityEngine();
+    const impactEngine = new ImpactEngine();
+    const liquidityEngine = new LiquidityEngine();   // 🔥 ADD THIS
+    const positionEngine = new PositionSizingEngine();
+    const regimeEngine = new RegimeEngine();
+    const decisionPolicy = new DecisionPolicy();
+
 
 
 
@@ -194,6 +223,10 @@ const RealtimeRenderer = (() => {
         initAlphaChart("alpha-panel");   // 🔥 ADD THIS
         initI1Chart("ioneChart");
         initRRPChart("rrpChart");   // ✅ ADD THIS
+        initImpactChart("impactChart");
+        initLiquidityChart("liquidityChart");
+        initPositionSizingChart("positionSizingChart");
+        initRegimeRiskChart("regimeRiskChart");
     }
 
 function updateLTPLine(ltp) {
@@ -939,38 +972,125 @@ function startWebSocket() {
         // ✅ Keep ONLY ONE check (you had duplicate)
         if (String(data.securityId) !== String(socketSecurityId)) return;
         updateMarketBuffer(data);
+
+        handleTick(data);  // 🔥 first
+
         const I1 = computeI1(marketBuffer, 50);
         pushI1(I1, data.ltt * 1000);
-//        console.log('i1 buffer :', I1Buffer);
 
-        handleTick(data);
-//        console.log("WS tick", data.ltp, marketBuffer.index);
+        const impact = impactEngine.update(data);
+
         const features = featureEngine.update(data);
         if (!features) return;
 
-        // =========================
-        // INJECT MARKET STATE
-        // =========================
+        // ---- impact ----
+        features.k = impact?.k || 0;
+        features.ofi = impact?.ofi || 0;
+
+        // ---- liquidity ----
+        const level1 = data.depth?.[0];
+        let liquidity = null;
+
+        if (level1) {
+            liquidity = liquidityEngine.update({
+                bid: level1.bid_price,
+                ask: level1.ask_price,
+                bidQty: level1.bid_qty,
+                askQty: level1.ask_qty,
+                k: features.k,
+                I1: I1 || 0
+            });
+        }
+
+        if (liquidity) {
+            features.liquidity = liquidity.liquidity;
+        }
+
+        // ---- k × I1 ----
+        features.kI1 = features.k * I1;
+
+        // ---- fragility (🔥 important) ----
+        features.fragility =
+            (1 - (features.liquidity || 0)) *
+            Math.abs(features.k);
+
+        // ---- inject market state ----
         features.netGEX = marketState.netGEX;
         features.adv    = marketState.adv;
         features.gexStd = marketState.gexStd;
 
-        // =========================
-        // SAFETY CHECK (IMPORTANT)
-        // =========================
-        if (!features.netGEX || !features.gexStd) {
-            return;
-        }
+        if (features.netGEX == null || features.gexStd == null) return;
 
-        const rrp = rrpModel.compute(features);
+        // ---- RRP ----
+        const rrp = rrpModel.compute({
+            ...features,
+            impactK: features.k || 0,
+            fragility: features.fragility || 0   // 🔥 ADD
+        });
         if (!rrp) return;
-
-        rrpSeries.push({
-            time: data.timestamp || Date.now(),
-            value: rrp.final
+        rrpSeries.push({ time: data.timestamp || Date.now(), value: rrp.final });
+        if (features.liquidity == null) return;
+        if (rrpSeries.length > 300) rrpSeries.shift();
+        const position = positionEngine.update({
+            k: features.k,
+            I1: I1,
+            liquidity: features.liquidity,
+            capital: 500000,
+            price: data.ltp
         });
 
-        if (rrpSeries.length > 300) rrpSeries.shift();
+        if (position) {
+            features.positionSize = position.units;
+            features.positionNorm = position.normalized;
+            updatePositionSizingChart(
+                    position,
+                    data.ltt * 1000
+                );
+        }
+        const regime = regimeEngine.update({
+                k: features.k,
+                I1: I1,
+                liquidity: features.liquidity,
+                ofi: features.ofi
+            });
+
+            if (regime) {
+                features.regime = regime.regime;
+                features.fragility = regime.fragility;
+                features.regimeProbs = regime.probs;
+                features.direction = regime.direction;
+                const policyOutput = decisionPolicy.update({
+                            k: features.k,
+                            I1: I1,
+                            liquidity: features.liquidity,
+                            regimeProbs: regime.probs,
+                            direction: regime.direction
+                            });
+
+                features.policy = policyOutput;
+                updateRegimeRiskChart(
+                        regime.probs,
+                        policyOutput.impactRisk,
+                        data.ltt * 1000
+                    );
+            }
+
+
+
+        // ---- chart ----
+        updateImpactChart(
+                features.k,
+                I1,
+                features.fragility,
+                features.regime,
+                data.ltt * 1000
+            );
+        if (features?.liquidity != null) {
+            updateLiquidityChart(
+                features.liquidity,
+                data.ltt * 1000
+            );
+        }
 
         renderRRP(rrpSeries);
 
@@ -1178,6 +1298,8 @@ function setActiveStock(symbol) {
     resetVolFeatureBuffer();
     resetIVStructureChart();
     resetNetGEXBuffer();   // ✅ ADD THIS
+    resetImpactChart();
+    resetLiquidityChart();
 
 
     const input = document.getElementById("stockSelectchart")
