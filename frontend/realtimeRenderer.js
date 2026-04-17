@@ -70,6 +70,10 @@ import {
     initRegimeRiskChart,
     updateRegimeRiskChart
 } from "../scripts/uicomponents/regimeRiskChart.js";
+import {dSBuffer, pushdS} from "../scripts/buffers/dsBuffer.js";
+import {classifyZone, computeG2} from "../scripts/classification/flowDsClassification.js";
+import {initdSChart, updatedSChart} from "../scripts/uicomponents/dsChart.js";
+import {DSEngine} from "../scripts/engines/DSEngine.js";
 const RealtimeRenderer = (() => {
 
     let chart = null
@@ -106,6 +110,7 @@ const RealtimeRenderer = (() => {
     const positionEngine = new PositionSizingEngine();
     const regimeEngine = new RegimeEngine();
     const decisionPolicy = new DecisionPolicy();
+    const dSEngine = new DSEngine();
 
 
 
@@ -219,6 +224,7 @@ const RealtimeRenderer = (() => {
         initMicroChart("microChart");
         initImbalanceChart("imbalanceChart");
         initFlowChart("flowChart");
+        initdSChart("dsChart");
         initLBAChart("lbaChart");
         initAlphaChart("alpha-panel");   // 🔥 ADD THIS
         initI1Chart("ioneChart");
@@ -1047,6 +1053,64 @@ function startWebSocket() {
                     data.ltt * 1000
                 );
         }
+        const size = marketBuffer.size;
+        const i = marketBuffer.index;
+
+        let microprice;
+
+        if (!marketBuffer.filled && i === 0) return;
+
+        if (!marketBuffer.filled) {
+            microprice = marketBuffer.microprice[i - 1];
+        } else {
+            microprice =
+                marketBuffer.microprice[(i - 1 + size) % size];
+        }
+
+        if (microprice == null) return;
+        const dS = dSEngine.update({
+                microprice: microprice,
+                I1: I1 || 0,
+                k: features.k || 0,
+                liquidity: features.liquidity || 0
+            });
+        console.log('ds:',dS);
+        // =========================
+        // 🔥 G2 COMPUTATION
+        // =========================
+        const g2 = computeG2({
+            flow: features.ofi || 0,
+            dS: dS,
+            I1: I1 || 0,
+            k: features.k || 0,
+            threshold: 0.1
+        });
+
+        // =========================
+        // 🔥 ZONE CLASSIFICATION
+        // =========================
+        const zone = classifyZone({
+            flow: features.ofi || 0,
+            dS: dS
+        });
+
+        // =========================
+        // 🔥 ATTACH TO FEATURES (VERY IMPORTANT)
+        // =========================
+        features.dS = dS;
+        features.G2 = g2;
+        features.zone = zone;
+        if (!dS || isNaN(dS.dS_adj)) return;
+
+        pushdS(
+            dS,
+            features.ofi || 0,
+            g2.state,
+            zone,   // 🔥 ADD THIS
+            data.ltt * 1000
+        );
+
+        updatedSChart(dSBuffer);
         const regime = regimeEngine.update({
                 k: features.k,
                 I1: I1,
@@ -1064,7 +1128,10 @@ function startWebSocket() {
                             I1: I1,
                             liquidity: features.liquidity,
                             regimeProbs: regime.probs,
-                            direction: regime.direction
+                            direction: regime.direction,
+                            G2: g2,
+                            zone: zone,
+                            dS: dS
                             });
 
                 features.policy = policyOutput;
@@ -1074,6 +1141,7 @@ function startWebSocket() {
                         data.ltt * 1000
                     );
             }
+
 
 
 
