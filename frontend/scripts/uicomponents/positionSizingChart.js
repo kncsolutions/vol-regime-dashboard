@@ -40,6 +40,7 @@ export function initPositionSizingChart(panelId) {
 
         // Legend explains transformation layers
         legend: {
+            top:0,
             data: [
                 "Raw Signal",
                 "Normalized",

@@ -31,7 +31,7 @@ export class RegimeEngine {
         return 1 / (1 + Math.exp(-x));
     }
 
-    update({ k, I1, liquidity, ofi = 0 }) {
+    update({ k, I1, I2=0, I3=0, liquidity, ofi = 0 }) {
 
         /**
          * --------------------------------------------------

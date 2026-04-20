@@ -1,56 +1,7 @@
 let impactChart = null;
 
 /**
- * ============================================================
- * Impact Chart (Microstructure State Visualization)
- * ============================================================
- *
- * Purpose:
- * --------
- * Visualize real-time microstructure dynamics combining:
- *
- *   1. Impact (k)
- *   2. Instability (I1)
- *   3. Fragility
- *   4. Regime classification
- *
- * This chart represents:
- *
- *   Market Flow → Price Response → Stability → Regime
- *
- * ------------------------------------------------------------
- * Key Variables:
- *
- * (1) Impact (k):
- *     k ≈ ΔP / OFI
- *
- *     Measures how much price moves per unit order flow.
- *
- * (2) Instability (I1):
- *     Captures variance / structural instability of price.
- *
- * (3) Impact-adjusted instability:
- *     kI1 = k × I1
- *
- *     High values → unstable + reactive market (explosive)
- *
- * (4) Fragility:
- *     Fragility = (1 - Liquidity) × |k|
- *
- *     Measures probability of market failure / sharp move
- *
- * (5) Regime:
- *     Discrete classification from RegimeEngine:
- *
- *       TOXIC        → fragile + high impact
- *       TREND_UP     → directional upward flow
- *       TREND_DOWN   → directional downward flow
- *       MEAN_REVERT  → stable + liquid
- *
- * ------------------------------------------------------------
- * This chart answers:
- *
- *   "Is the market stable, trending, or about to break?"
+ * INIT
  */
 export function initImpactChart(panelId) {
     const el = document.getElementById(panelId);
@@ -63,182 +14,135 @@ export function initImpactChart(panelId) {
     impactChart.setOption({
         backgroundColor: "#111",
 
+        grid: [
+            { left: "5%", right: "30%", top: "5%", bottom: "12%" },
+            { left: "75%", right: "5%", top: "5%", bottom: "12%" }
+        ],
+
         tooltip: { trigger: "axis" },
 
         legend: {
-            data: ["Impact (k)", "k EMA", "k × I1", "Fragility", "Regime"],
+            top:0,
+            data: ["Impact (k)", "k EMA", "k × I1", "Fragility", "Regime", "Regime Profile"],
             textStyle: { color: "#ccc" }
         },
 
-        xAxis: {
-            type: "category",
-            data: [],
-            axisLine: { lineStyle: { color: "#888" } }
-        },
+        xAxis: [
+            {
+                type: "category",
+                gridIndex: 0,
+                data: [],
+                axisLine: { lineStyle: { color: "#888" } }
+            },
+            {
+                type: "value",
+                gridIndex: 1,
+                name: "Count"
+            }
+        ],
 
-        /**
-         * Y-axis:
-         * Shared scale for all continuous signals
-         *
-         * Note:
-         *  - k, kI1, fragility are not directly comparable
-         *  - but visual alignment helps detect co-movement
-         */
         yAxis: [
             {
                 type: "value",
+                gridIndex: 0,
                 name: "Impact Space",
                 axisLine: { lineStyle: { color: "#888" } },
                 splitLine: { lineStyle: { color: "#222" } }
+            },
+            {
+                type: "category",
+                gridIndex: 1,
+                data: ["TOXIC", "TREND_UP", "TREND_DOWN", "MEAN_REVERT"]
             }
         ],
 
         series: [
-            /**
-             * (1) Raw Impact
-             * ----------------------------------------
-             * k_t ≈ ΔP / OFI
-             *
-             * No smoothing → captures instantaneous response
-             */
-            {
-                name: "Impact (k)",
-                type: "line",
-                data: [],
-                smooth: false,
-                showSymbol: false
-            },
+            { name: "Impact (k)", type: "line", data: [], showSymbol: false },
+            { name: "k EMA", type: "line", data: [], smooth: true, showSymbol: false },
+            { name: "k × I1", type: "line", data: [], smooth: true, showSymbol: false },
+            { name: "Fragility", type: "line", data: [], smooth: true, showSymbol: false },
+            { name: "Regime", type: "bar", data: [], opacity: 0.2 },
 
-            /**
-             * (2) Smoothed Impact
-             * ----------------------------------------
-             * k̃_t = α·k_t + (1 - α)·k̃_{t-1}
-             *
-             * Reduces noise → reveals structural shifts
-             */
+            // 🔥 NEW PROFILE SERIES
             {
-                name: "k EMA",
-                type: "line",
-                data: [],
-                smooth: true,
-                showSymbol: false,
-                lineStyle: { width: 2 }
-            },
-
-            /**
-             * (3) Impact-adjusted Instability
-             * ----------------------------------------
-             * kI1_t = k_t × I1_t
-             *
-             * Interpretation:
-             *  - high → explosive regime
-             *  - low → absorbed flow
-             */
-            {
-                name: "k × I1",
-                type: "line",
-                data: [],
-                smooth: true,
-                showSymbol: false,
-                lineStyle: { width: 2, type: "dashed" }
-            },
-
-            /**
-             * (4) Fragility
-             * ----------------------------------------
-             * Fragility_t = (1 - L_t) × |k_t|
-             *
-             * Combines:
-             *  - lack of liquidity
-             *  - high impact
-             *
-             * High → market likely to break
-             */
-            {
-                name: "Fragility",
-                type: "line",
-                data: [],
-                smooth: true,
-                showSymbol: false,
-                lineStyle: { width: 2 }
-            },
-
-            /**
-             * (5) Regime (categorical → numeric encoding)
-             * ----------------------------------------
-             *
-             * Mapping:
-             *   TOXIC       → -1
-             *   TREND_UP    →  0.5
-             *   TREND_DOWN  → -0.5
-             *   MEAN_REVERT →  1
-             *
-             * Used for visualization only
-             */
-            {
-                name: "Regime",
+                name: "Regime Profile",
                 type: "bar",
+                xAxisIndex: 1,
+                yAxisIndex: 1,
                 data: [],
-                opacity: 0.2
+                barWidth: "60%"
             }
         ],
+
         dataZoom: [
-            { type: 'inside' },
-            { type: 'slider', height: 25, bottom: 30 }
-        ],
+            { type: "inside" },
+            { type: "slider", height: 25, bottom: 30 }
+        ]
     });
 }
 
-/* ============================================================
-   Internal Buffers (Rolling Time Series)
-   ============================================================ */
-
-const kBuffer = [];            // k_t
-const kEmaBuffer = [];         // k̃_t
-const kI1Buffer = [];          // k × I1
-const fragilityBuffer = [];    // fragility_t
-const regimeBuffer = [];       // encoded regime
-const timeBuffer = [];         // timestamps
+/**
+ * BUFFERS
+ */
+const kBuffer = [];
+const kEmaBuffer = [];
+const kI1Buffer = [];
+const fragilityBuffer = [];
+const regimeBuffer = [];      // numeric (for plot)
+const regimeLabelBuffer = []; // 🔥 string (for profile)
+const timeBuffer = [];
 
 let kEma = 0;
 
 /**
- * Update Impact Chart
- * ------------------------------------------------------------
- * Called on each websocket tick
- *
- * Inputs:
- *   k         → impact coefficient
- *   I1        → instability metric
- *   fragility → (1 - liquidity) × |k|
- *   regime    → string label (TOXIC / TREND / MEAN_REVERT)
+ * PROFILE BUILDER (categorical)
+ */
+function buildRegimeProfile(arr) {
+    const counts = {
+        TOXIC: 0,
+        TREND_UP: 0,
+        TREND_DOWN: 0,
+        MEAN_REVERT: 0
+    };
+
+    for (let r of arr) {
+        if (counts[r] != null) counts[r]++;
+    }
+
+    const labels = Object.keys(counts);
+    const values = labels.map(k => counts[k]);
+
+    // 🔥 VPOC
+    let vpoc = null;
+    let max = -1;
+
+    for (let k of labels) {
+        if (counts[k] > max) {
+            max = counts[k];
+            vpoc = k;
+        }
+    }
+
+    return { labels, values, vpoc };
+}
+
+/**
+ * UPDATE
  */
 export function updateImpactChart(k, I1, fragility, regime, timestamp = Date.now()) {
     if (!impactChart || impactChart.isDisposed?.()) return;
     if (k == null || isNaN(k)) return;
 
     /**
-     * --------------------------------------------------------
-     * 1. EMA smoothing
-     *
-     *   k̃_t = α·k_t + (1 - α)·k̃_{t-1}
+     * EMA
      */
     const alpha = 0.1;
     kEma = alpha * k + (1 - alpha) * kEma;
 
-    /**
-     * --------------------------------------------------------
-     * 2. Impact-adjusted instability
-     *
-     *   kI1_t = k_t × I1_t
-     */
     const kI1 = (I1 != null && !isNaN(I1)) ? k * I1 : 0;
 
     /**
-     * --------------------------------------------------------
-     * 3. Regime encoding
-     *
-     * Convert categorical → numeric for plotting
+     * Regime encoding
      */
     const regimeMap = {
         TOXIC: -1,
@@ -250,20 +154,19 @@ export function updateImpactChart(k, I1, fragility, regime, timestamp = Date.now
     const regimeValue = regimeMap[regime] ?? 0;
 
     /**
-     * --------------------------------------------------------
-     * 4. Push data into buffers
+     * Push buffers
      */
     kBuffer.push(k);
     kEmaBuffer.push(kEma);
     kI1Buffer.push(kI1);
     fragilityBuffer.push(fragility);
     regimeBuffer.push(regimeValue);
+    regimeLabelBuffer.push(regime); // 🔥 actual label
 
     timeBuffer.push(new Date(timestamp).toLocaleTimeString());
 
     /**
-     * --------------------------------------------------------
-     * 5. Rolling window maintenance
+     * Rolling window
      */
     const MAX = 300;
     if (kBuffer.length > MAX) {
@@ -272,31 +175,50 @@ export function updateImpactChart(k, I1, fragility, regime, timestamp = Date.now
         kI1Buffer.shift();
         fragilityBuffer.shift();
         regimeBuffer.shift();
+        regimeLabelBuffer.shift();
         timeBuffer.shift();
     }
 
     /**
-     * --------------------------------------------------------
-     * 6. Update chart
+     * 🔥 PROFILE (last ≤200)
+     */
+    const recent = regimeLabelBuffer.slice(-200);
+    const profile = buildRegimeProfile(recent);
+
+    /**
+     * UPDATE CHART
      */
     impactChart.setOption({
-        xAxis: { data: timeBuffer },
+        xAxis: [
+            { data: timeBuffer },
+            {}
+        ],
+
         series: [
             { data: kBuffer },
             { data: kEmaBuffer },
             { data: kI1Buffer },
             { data: fragilityBuffer },
-            { data: regimeBuffer }
+            { data: regimeBuffer },
+
+            // 🔥 PROFILE
+            {
+                name: "Regime Profile",
+                data: profile.values,
+                itemStyle: {
+                    color: function (params) {
+                        return profile.labels[params.dataIndex] === profile.vpoc
+                            ? "#ff4444"
+                            : "#888";
+                    }
+                }
+            }
         ]
     });
 }
 
 /**
- * Reset Impact Chart
- * ------------------------------------------------------------
- * Clears all buffers on:
- *   - symbol change
- *   - timeframe reset
+ * RESET
  */
 export function resetImpactChart() {
     kBuffer.length = 0;
@@ -304,20 +226,15 @@ export function resetImpactChart() {
     kI1Buffer.length = 0;
     fragilityBuffer.length = 0;
     regimeBuffer.length = 0;
+    regimeLabelBuffer.length = 0;
     timeBuffer.length = 0;
 
     kEma = 0;
 
     if (impactChart) {
         impactChart.setOption({
-            xAxis: { data: [] },
-            series: [
-                { data: [] },
-                { data: [] },
-                { data: [] },
-                { data: [] },
-                { data: [] }
-            ]
+            xAxis: [{ data: [] }, {}],
+            series: Array(6).fill({ data: [] })
         });
     }
 }

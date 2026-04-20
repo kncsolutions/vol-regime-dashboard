@@ -165,7 +165,7 @@ export function updateFlowChart(marketBuffer) {
     const WINDOW = 400;
     const windowData = data.slice(-WINDOW);
 
-    const profile = buildFlowProfile(windowData, 60);
+    const profile = buildFlowProfile(windowData, 40);
     if (!profile) return;
 
     const { hist, prices } = profile;
@@ -180,65 +180,113 @@ export function updateFlowChart(marketBuffer) {
      */
     flowChart.setOption({
 
-        tooltip: {
-            trigger: "axis",
-            axisPointer: { type: "shadow" },
-            formatter: function (params) {
-                const p = params?.[0];
-                if (!p) return "";
-
-                return `
-                    <b>Flow:</b> ${prices[p.dataIndex].toFixed(4)}<br/>
-                    <b>Count:</b> ${p.data}
-                `;
-            }
+    grid: [
+        // 🔹 Left: Flow time-series
+        {
+            left: "5%",
+            right: "30%",
+            top: "5%",
+            bottom: "10%"
         },
+        // 🔹 Right: Profile
+        {
+            left: "75%",
+            right: "5%",
+            top: "5%",
+            bottom: "10%"
+        }
+    ],
 
-        xAxis: {
-            type: "value",
-            name: "Frequency"
-        },
+    tooltip: {
+        trigger: "axis"
+    },
 
-        yAxis: {
+    /**
+     * ----------------------------------------
+     * AXES
+     * ----------------------------------------
+     */
+    xAxis: [
+        // 🔹 Time axis
+        {
             type: "category",
-            data: prices.map(p => p.toFixed(4)),
-            inverse: true
+            gridIndex: 0,
+            data: data.map((_, i) => i),
+            boundaryGap: false
         },
+        // 🔹 Frequency axis
+        {
+            type: "value",
+            gridIndex: 1,
+            name: "Freq"
+        }
+    ],
 
-        series: [{
-            name: "Profile",
-            type: "bar",
-            data: hist,
-            barWidth: "80%"
-        }],
+    yAxis: [
+        // 🔹 Shared flow axis
+        {
+            type: "value",
+            gridIndex: 0,
+            scale: true
+        },
+        {
+            type: "category",
+            gridIndex: 1,
+            data: prices.map(p => p.toFixed(4)),
+            inverse: false
+        }
+    ],
+
+    /**
+     * ----------------------------------------
+     * SERIES
+     * ----------------------------------------
+     */
+    series: [
 
         /**
-         * 🔥 POC / VAH / VAL OVERLAY
+         * 🔥 FLOW LINE (LEFT PANEL)
          */
-        graphic: levels ? [
-            {
-                type: "line",
-                left: 0,
-                right: 0,
-                top: getYCoord(levels.poc, prices),
-                style: { stroke: "#ffcc00", lineWidth: 2 }
+        {
+            name: "Flow",
+            type: "line",
+            xAxisIndex: 0,
+            yAxisIndex: 0,
+            data: data,
+            smooth: true,
+            showSymbol: false,
+            lineStyle: {
+                color: "#00ccff",
+                width: 1.5
             },
-            {
-                type: "line",
-                left: 0,
-                right: 0,
-                top: getYCoord(levels.vah, prices),
-                style: { stroke: "#00ff99", lineWidth: 1, lineDash: [5, 5] }
-            },
-            {
-                type: "line",
-                left: 0,
-                right: 0,
-                top: getYCoord(levels.val, prices),
-                style: { stroke: "#ff6666", lineWidth: 1, lineDash: [5, 5] }
+
+            markLine: levels ? {
+                symbol: "none",
+                label: { color: "#fff" },
+                data: [
+                    { yAxis: levels.poc, name: "POC" },
+                    { yAxis: levels.vah, name: "VAH" },
+                    { yAxis: levels.val, name: "VAL" }
+                ]
+            } : undefined
+        },
+
+        /**
+         * 🔥 PROFILE BARS (RIGHT PANEL)
+         */
+        {
+            name: "Profile",
+            type: "bar",
+            xAxisIndex: 1,
+            yAxisIndex: 1,
+            data: hist,
+            barWidth: "70%",
+            itemStyle: {
+                color: "#888"
             }
-        ] : []
-    });
+        }
+    ]
+});
 }
 
 function getYCoord(value, prices) {

@@ -14,6 +14,7 @@ export function initRegimeRiskChart(panelId) {
         tooltip: { trigger: "axis" },
 
         legend: {
+            top:0,
             data: ["TOXIC", "TREND", "MEAN_REVERT", "Impact Risk"],
             textStyle: { color: "#ccc" }
         },

@@ -74,6 +74,15 @@ import {dSBuffer, pushdS} from "../scripts/buffers/dsBuffer.js";
 import {classifyZone, computeG2} from "../scripts/classification/flowDsClassification.js";
 import {initdSChart, updatedSChart} from "../scripts/uicomponents/dsChart.js";
 import {DSEngine} from "../scripts/engines/DSEngine.js";
+
+import { I2Engine } from "../scripts/engines/I2Engine.js";
+import { I3Engine } from "../scripts/engines/I3Engine.js";
+
+import { I2Buffer, pushI2 } from "../scripts/buffers/I2Buffer.js";
+import { I3Buffer, pushI3 } from "../scripts/buffers/I3Buffer.js";
+
+import { initI2Chart, updateI2Chart } from "../scripts/uicomponents/I2Chart.js";
+import { initI3Chart, updateI3Chart } from "../scripts/uicomponents/I3Chart.js";
 const RealtimeRenderer = (() => {
 
     let chart = null
@@ -111,6 +120,9 @@ const RealtimeRenderer = (() => {
     const regimeEngine = new RegimeEngine();
     const decisionPolicy = new DecisionPolicy();
     const dSEngine = new DSEngine();
+
+    const I2engine = new I2Engine(0.1);
+    const I3engine = new I3Engine(0.1);
 
 
 
@@ -228,6 +240,8 @@ const RealtimeRenderer = (() => {
         initLBAChart("lbaChart");
         initAlphaChart("alpha-panel");   // 🔥 ADD THIS
         initI1Chart("ioneChart");
+        initI2Chart("itwoChart");
+        initI3Chart("ithreeChart");
         initRRPChart("rrpChart");   // ✅ ADD THIS
         initImpactChart("impactChart");
         initLiquidityChart("liquidityChart");
@@ -940,6 +954,16 @@ function getPriceHistoryFromBuffer(n = 100) {
 
     return result.reverse(); // oldest → newest
 }
+function attach(features, key, value) {
+    if (!features) return;
+
+    if (value === undefined) return;
+
+    // optional: filter NaN
+    if (typeof value === "number" && !isFinite(value)) return;
+
+    features[key] = value;
+}
 //Web socket----------------------
 function startWebSocket() {
     if (ws) {
@@ -969,200 +993,331 @@ function startWebSocket() {
             };
 
     ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-//        console.log(data)
+    let data;
 
-//        console.log("Tick:", data.securityId, "Active:", currentSecurityId);
-//        console.log("MARKET STATE:", marketState);
+    // -------------------------
+    // 0. SAFE PARSE
+    // -------------------------
+    try {
+        data = JSON.parse(event.data);
+    } catch (e) {
+        console.error("WS parse error", e);
+        return;
+    }
 
-        // ✅ Keep ONLY ONE check (you had duplicate)
-        if (String(data.securityId) !== String(socketSecurityId)) return;
-        updateMarketBuffer(data);
+    if (String(data.securityId) !== String(socketSecurityId)) return;
 
-        handleTick(data);  // 🔥 first
+    updateMarketBuffer(data);
+    handleTick(data);
 
-        const I1 = computeI1(marketBuffer, 50);
-        pushI1(I1, data.ltt * 1000);
+    const ts = data.ltt * 1000 || Date.now();
 
-        const impact = impactEngine.update(data);
+    // ==================================================
+    // 1. CORE SIGNALS (NEVER BLOCK)
+    // ==================================================
+    const I1 = computeI1(marketBuffer, 50);
 
-        const features = featureEngine.update(data);
-        if (!features) return;
+    const I2 = I2engine.update(I1);
+    const I3 = I3engine.update(I1);
 
-        // ---- impact ----
-        features.k = impact?.k || 0;
-        features.ofi = impact?.ofi || 0;
+    pushI1(I1, ts);
+    pushI2(I2, ts);
+    pushI3(I3, ts);
 
-        // ---- liquidity ----
+    // ==================================================
+    // 2. FEATURE LAYER (SAFE)
+    // ==================================================
+    let features = null;
+    try {
+        features = featureEngine.update(data);
+    } catch (e) {
+        console.warn("Feature error", e);
+    }
+    // -------------------------
+    // ---- MARKET STATE (SAFE)
+    // -------------------------
+    attach(features, "netGEX", marketState.netGEX);
+    attach(features, "adv", marketState.adv);
+    attach(features, "gexStd", marketState.gexStd);
+
+    // validity flags (VERY useful)
+    const hasGEX =
+        isFinite(features.netGEX) &&
+        isFinite(features.gexStd);
+
+    // optional debug
+    // if (!hasGEX) console.debug("GEX state missing");
+
+    // attach core signals ALWAYS
+    const core = {
+        I1: I1 ?? 0,
+        I2: I2 ?? 0,
+        I3: I3 ?? 0
+    };
+    try{
+        attach(features, "I1", I1);
+        attach(features, "I2", I2);
+        attach(features, "I3", I3);
+    }catch (e) {}
+
+    // ==================================================
+    // 3. IMPACT + LIQUIDITY (OPTIONAL)
+    // ==================================================
+    let impact = {};
+    try {
+        impact = impactEngine.update(data) || {};
+    } catch (e) {}
+
+    let liquidity = null;
+    try {
         const level1 = data.depth?.[0];
-        let liquidity = null;
-
         if (level1) {
-            liquidity = liquidityEngine.update({
+            const liq = liquidityEngine.update({
                 bid: level1.bid_price,
                 ask: level1.ask_price,
                 bidQty: level1.bid_qty,
                 askQty: level1.ask_qty,
-                k: features.k,
-                I1: I1 || 0
+                k: impact.k || 0,
+                I1: core.I1
             });
+            liquidity = liq?.liquidity ?? null;
         }
+    } catch (e) {}
+    try{
+        attach(features, "k", impact?.k);
+        attach(features, "ofi", impact?.ofi);
+        attach(features, "liquidity", liquidity);
+        attach(features, "kI1", (impact?.k || 0) * (I1 || 0));
 
-        if (liquidity) {
-            features.liquidity = liquidity.liquidity;
-        }
+        attach(
+            features,
+            "fragility",
+            (1 - (liquidity || 0)) * Math.abs(impact?.k || 0)
+        );
+        } catch (e) {}
 
-        // ---- k × I1 ----
-        features.kI1 = features.k * I1;
 
-        // ---- fragility (🔥 important) ----
-        features.fragility =
-            (1 - (features.liquidity || 0)) *
-            Math.abs(features.k);
+    // ==================================================
+    // 4. MICROSIGNAL LAYER (dS / G2 / ZONE)
+    // ==================================================
+    let dS = null, g2 = null, zone = null;
 
-        // ---- inject market state ----
-        features.netGEX = marketState.netGEX;
-        features.adv    = marketState.adv;
-        features.gexStd = marketState.gexStd;
-
-        if (features.netGEX == null || features.gexStd == null) return;
-
-        // ---- RRP ----
-        const rrp = rrpModel.compute({
-            ...features,
-            impactK: features.k || 0,
-            fragility: features.fragility || 0   // 🔥 ADD
-        });
-        if (!rrp) return;
-        rrpSeries.push({ time: data.timestamp || Date.now(), value: rrp.final });
-        if (features.liquidity == null) return;
-        if (rrpSeries.length > 300) rrpSeries.shift();
-        const position = positionEngine.update({
-            k: features.k,
-            I1: I1,
-            liquidity: features.liquidity,
-            capital: 500000,
-            price: data.ltp
-        });
-
-        if (position) {
-            features.positionSize = position.units;
-            features.positionNorm = position.normalized;
-            updatePositionSizingChart(
-                    position,
-                    data.ltt * 1000
-                );
-        }
+    try {
         const size = marketBuffer.size;
         const i = marketBuffer.index;
 
-        let microprice;
+        const microprice = marketBuffer.filled
+            ? marketBuffer.microprice[(i - 1 + size) % size]
+            : marketBuffer.microprice[i - 1];
 
-        if (!marketBuffer.filled && i === 0) return;
-
-        if (!marketBuffer.filled) {
-            microprice = marketBuffer.microprice[i - 1];
-        } else {
-            microprice =
-                marketBuffer.microprice[(i - 1 + size) % size];
-        }
-
-        if (microprice == null) return;
-        const dS = dSEngine.update({
-                microprice: microprice,
-                I1: I1 || 0,
-                k: features.k || 0,
-                liquidity: features.liquidity || 0
+        if (microprice != null) {
+            dS = dSEngine.update({
+                microprice,
+                I1: core.I1,
+                k: impact.k || 0,
+                liquidity: liquidity || 0
             });
-        console.log('ds:',dS);
-        // =========================
-        // 🔥 G2 COMPUTATION
-        // =========================
-        const g2 = computeG2({
-            flow: features.ofi || 0,
-            dS: dS,
-            I1: I1 || 0,
-            k: features.k || 0,
-            threshold: 0.1
-        });
 
-        // =========================
-        // 🔥 ZONE CLASSIFICATION
-        // =========================
-        const zone = classifyZone({
-            flow: features.ofi || 0,
-            dS: dS
-        });
+            if (dS && !isNaN(dS.dS_adj)) {
+                g2 = computeG2({
+                    flow: impact.ofi || 0,
+                    dS,
+                    I1: core.I1,
+                    k: impact.k || 0,
+                    threshold: 0.1
+                });
 
-        // =========================
-        // 🔥 ATTACH TO FEATURES (VERY IMPORTANT)
-        // =========================
-        features.dS = dS;
-        features.G2 = g2;
-        features.zone = zone;
-        if (!dS || isNaN(dS.dS_adj)) return;
+                zone = classifyZone({
+                    flow: impact.ofi || 0,
+                    dS
+                });
 
-        pushdS(
-            dS,
-            features.ofi || 0,
-            g2.state,
-            zone,   // 🔥 ADD THIS
-            data.ltt * 1000
+                pushdS(dS, impact.ofi || 0, g2?.state, zone, ts);
+            }
+        }
+    } catch (e) {
+        console.warn("dS pipeline error", e);
+    }
+    try{
+        attach(features, "dS", dS);
+        attach(features, "G2", g2);
+        attach(features, "zone", zone);
+        } catch (e) {}
+
+    // ==================================================
+    // 5. REGIME (OPTIONAL, NEVER BLOCK)
+    // ==================================================
+    let regime = null;
+
+    try {
+        if (liquidity != null) {
+            regime = regimeEngine.update({
+                k: impact.k || 0,
+                I1: core.I1,
+                I2: core.I2,
+                I3: core.I3,
+                liquidity,
+                ofi: impact.ofi || 0
+            });
+        }
+    } catch (e) {
+        console.warn("Regime error", e);
+    }
+    if (regime) {
+        attach(features, "regime", regime.regime);
+        attach(features, "regimeProbs", regime.probs);
+        attach(features, "direction", regime.direction);
+    }
+
+    // ==================================================
+    // 6. POLICY (OPTIONAL)
+    // ==================================================
+    let policyOutput = null;
+
+    try {
+        if (regime) {
+            policyOutput = decisionPolicy.update({
+                k: impact.k || 0,
+                I1: core.I1,
+                I2: core.I2,
+                I3: core.I3,
+                liquidity: liquidity || 0,
+                regimeProbs: regime.probs,
+                direction: regime.direction,
+                dS,
+                G2: g2,
+                zone
+            });
+        }
+    } catch (e) {
+        console.warn("Policy error", e);
+    }
+    if (policyOutput) {
+        attach(features, "policy", policyOutput);
+
+        attach(features, "spreadMultiplier", policyOutput.spreadMultiplier);
+        attach(features, "sizeMultiplier", policyOutput.sizeMultiplier);
+        attach(features, "aggression", policyOutput.aggression);
+        attach(features, "skew", policyOutput.skew);
+        attach(features, "impactRisk", policyOutput.impactRisk);
+    }
+
+    // ==================================================
+    // 7. CHARTS (ALWAYS RUN, NEVER BLOCK)
+    // ==================================================
+    try {
+        updateImpactChart(
+            impact.k || 0,
+            core.I1,
+            (1 - (liquidity || 0)) * Math.abs(impact.k || 0),
+            regime?.regime,
+            ts
         );
 
-        updatedSChart(dSBuffer);
-        const regime = regimeEngine.update({
-                k: features.k,
-                I1: I1,
-                liquidity: features.liquidity,
-                ofi: features.ofi
-            });
+        if (liquidity != null) {
+            updateLiquidityChart(liquidity, ts);
+        }
 
-            if (regime) {
-                features.regime = regime.regime;
-                features.fragility = regime.fragility;
-                features.regimeProbs = regime.probs;
-                features.direction = regime.direction;
-                const policyOutput = decisionPolicy.update({
-                            k: features.k,
-                            I1: I1,
-                            liquidity: features.liquidity,
-                            regimeProbs: regime.probs,
-                            direction: regime.direction,
-                            G2: g2,
-                            zone: zone,
-                            dS: dS
-                            });
+        if (dS) {
+            updatedSChart(dSBuffer);
+        }
 
-                features.policy = policyOutput;
-                updateRegimeRiskChart(
-                        regime.probs,
-                        policyOutput.impactRisk,
-                        data.ltt * 1000
-                    );
-            }
-
-
-
-
-        // ---- chart ----
-        updateImpactChart(
-                features.k,
-                I1,
-                features.fragility,
-                features.regime,
-                data.ltt * 1000
-            );
-        if (features?.liquidity != null) {
-            updateLiquidityChart(
-                features.liquidity,
-                data.ltt * 1000
+        if (regime && policyOutput) {
+            updateRegimeRiskChart(
+                regime.probs,
+                policyOutput.impactRisk,
+                ts
             );
         }
 
-        renderRRP(rrpSeries);
+    } catch (e) {
+        console.error("Chart error", e);
+    }
+   // -------------------------
+    // ---- RRP (SAFE) ---------
+    // -------------------------
+    let rrp = null;
 
-    };
+
+    if (hasGEX) {
+        try {
+            rrp = rrpModel.compute({
+                ...features,
+                impactK: features.k || 0,
+                fragility: features.fragility || 0
+            });
+        } catch (e) {
+            console.warn("RRP error", e);
+        }
+    }
+
+    // push ONLY if valid
+    if (rrp && isFinite(rrp.final)) {
+        rrpSeries.push({
+            time: data.timestamp || Date.now(),
+            value: rrp.final
+        });
+
+        if (rrpSeries.length > 300) {
+            rrpSeries.shift();
+        }
+    } else {
+        // optional debug
+         console.debug("RRP skipped");
+    }
+    if (rrp && isFinite(rrp.final)) {
+        attach(features, "rrp", rrp.final);
+    }
+
+
+
+
+    // -------------------------
+    // ---- POSITION (SAFE) ----
+    // -------------------------
+    let position = null;
+
+    try {
+        if (features?.liquidity != null && isFinite(I1)) {
+            position = positionEngine.update({
+                k: features.k || 0,
+                I1: I1,
+                liquidity: features.liquidity,
+                capital: 500000,
+                price: data.ltp
+            });
+        }
+    } catch (e) {
+        console.warn("Position error", e);
+    }
+
+    if (position) {
+        features.positionSize = position.units;
+        features.positionNorm = position.normalized;
+
+        try {
+            updatePositionSizingChart(position, data.ltt * 1000);
+        } catch (e) {
+            console.warn("Position chart error", e);
+        }
+    }
+
+
+    // -------------------------
+    // ---- RRP CHART (ALWAYS) --
+    // -------------------------
+    try {
+        renderRRP(rrpSeries);
+    } catch (e) {
+        console.warn("RRP chart error", e);
+    }
+
+    // ==================================================
+    // 8. DEBUG (OPTIONAL BUT POWERFUL)
+    // ==================================================
+    if (!I2) console.debug("I2 missing");
+    if (!I3) console.debug("I3 missing");
+};
 
     ws.onclose = () => {
         console.warn("WS closed, reconnecting...");
@@ -2204,7 +2359,9 @@ function startAlphaLoop() {
         updateFlowChart(marketBuffer);
         updateLBAChart(marketBuffer);
         updateI1Chart(I1Buffer);
-    }, 100); // 10 FPS
+        updateI2Chart(I2Buffer);
+        updateI3Chart(I3Buffer);
+    }, 1000); // 10 FPS
 }
 function stopAlphaLoop() {
     if (alphaLoop) {

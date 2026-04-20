@@ -28,6 +28,8 @@ export class DecisionPolicy {
     update({
         k,
         I1,
+        I2,   // 🔥 ADD
+        I3,   // 🔥 ADD
         liquidity,
         regimeProbs,
         direction,
@@ -72,10 +74,15 @@ export class DecisionPolicy {
          * Final:
          * R ∈ [0,1] (clipped)
          */
+        const convexity = Math.max(0, I2);   // trend strengthening
+        const instability = Math.abs(I3);    // structural change
+
         const rawImpact =
-            0.5 * Math.abs(k) +
-            0.3 * Math.abs(I1) +
-            0.2 * TOXIC;
+            0.4 * Math.abs(k) +
+            0.2 * Math.abs(I1) +
+            0.2 * TOXIC +
+            0.1 * convexity +
+            0.1 * instability;
 
         const impactRisk = Math.min(1, rawImpact);
 
@@ -96,11 +103,12 @@ export class DecisionPolicy {
          * - tighten in mean-reverting / liquid markets
          */
         let spreadMultiplier =
-            1 +
-            2 * impactRisk +
-            1.5 * TOXIC -
-            0.5 * MEAN_REVERT -
-            0.5 * liquidity;
+                1 +
+                2 * impactRisk +
+                1.5 * TOXIC +
+                0.8 * Math.max(0, Math.abs(I3) - 0.2) -   // 🔥 widen on instability
+                0.5 * MEAN_REVERT -
+                0.5 * liquidity;
 
         /**
          * Apply bounds:
@@ -127,8 +135,10 @@ export class DecisionPolicy {
          */
         let sizeMultiplier =
             1 -
-            0.7 * TOXIC -
-            0.3 * impactRisk +
+            0.6 * TOXIC -
+            0.3 * impactRisk -
+            0.3 * Math.max(0, -I2) -   // 🔥 trend weakening
+            0.4 * Math.abs(I3) +       // 🔥 instability → reduce size
             0.4 * MEAN_REVERT;
 
         /**
@@ -166,11 +176,16 @@ export class DecisionPolicy {
          *   → strong directional signal
          *   → sufficient liquidity
          */
-        const aggression =
-            TREND *
-            (1 - TOXIC) *
-            Math.abs(direction) *
-            (0.5 + 0.5 * liquidity);
+        const convexBoost = Math.max(0, I2);
+            const instabilityPenalty = 1 - Math.min(1, Math.abs(I3));
+
+            const aggression =
+                TREND *
+                (1 - TOXIC) *
+                Math.abs(direction) *
+                (0.5 + 0.5 * liquidity) *
+                (1 + 0.5 * convexBoost) *     // 🔥 push when accelerating
+                instabilityPenalty;           // 🔥 pull back before shock
 
         /**
          * Crossing condition:
@@ -199,7 +214,9 @@ export class DecisionPolicy {
         const skew =
             Math.tanh(direction) *
             (TREND * 0.7 + MEAN_REVERT * 0.3) *
-            (1 - TOXIC);
+            (1 - TOXIC) *
+            (1 - Math.max(0, -I2)) *      // 🔥 reduce skew if trend weakens
+            (1 - Math.abs(I3));           // 🔥 kill skew near turning points
 
         /**
          * --------------------------------------------------
@@ -212,6 +229,16 @@ export class DecisionPolicy {
          */
         const shouldQuote =
             TOXIC < 0.8 && liquidity > 0.1;
+
+        const exitSignal =
+            (Math.abs(I1) > 0.3) &&
+            (I2 < 0) &&
+            (I3 < -0.2);
+
+        if (exitSignal) {
+                sizeMultiplier *= 0.5;
+                spreadMultiplier *= 1.3;
+            }
 
         /**
          * --------------------------------------------------
