@@ -1,5 +1,28 @@
 import {computeGammaLadder, computeNetGEX, computeGammaFlip,computeGEXGradient,
 computeVegaLadder, computeVegaSkew} from "../services/optionChainService.js";
+let lastOptionRows = null;
+let lastOCUpdateTs = null;
+// -----------------------------
+// SETTERS
+// -----------------------------
+export function setOptionRows(rows) {
+    lastOptionRows = rows;
+}
+
+export function setOCUpdateTs(ts) {
+    lastOCUpdateTs = ts;
+}
+
+// -----------------------------
+// GETTERS
+// -----------------------------
+export function getOptionRows() {
+    return lastOptionRows;
+}
+
+export function getOCUpdateTs() {
+    return lastOCUpdateTs;
+}
 export function isValidOC(optionChain) {
     const oc = optionChain?.data?.data?.oc;
 
@@ -113,4 +136,58 @@ function normalizeOC(oc) {
 
 export function extractOC(optionChain) {
     return optionChain?.data?.data?.oc || {};
+}
+
+export function extractAvailableStrikes(optionRows) {
+    if (!optionRows) return [];
+
+    return optionRows
+        .map(r => r.strike)
+        .filter(s => isFinite(s))
+        .sort((a, b) => a - b);
+}
+
+
+export function findClosestStrike(strikes, target) {
+
+    if (!strikes || strikes.length === 0) return null;
+
+    let closest = strikes[0];
+    let minDiff = Math.abs(target - closest);
+
+    for (const s of strikes) {
+        const diff = Math.abs(target - s);
+
+        if (diff < minDiff) {
+            minDiff = diff;
+            closest = s;
+        }
+    }
+
+    return closest;
+}
+
+export function getStrikeFromExpectedMove({
+    spot,
+    expectedMove,
+    optionRows,
+    direction = "call"
+}) {
+
+    if (!spot || !expectedMove || !optionRows) return null;
+
+    const strikes = extractAvailableStrikes(optionRows);
+
+    const target =
+        direction === "call"
+            ? spot + expectedMove
+            : spot - expectedMove;
+
+    const strike = findClosestStrike(strikes, target);
+
+    return {
+        strike,
+        target,
+        distance: Math.abs(strike - target)
+    };
 }

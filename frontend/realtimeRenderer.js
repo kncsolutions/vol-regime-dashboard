@@ -26,7 +26,13 @@ import {initVegaChart, initVegaSkewChart, renderVegaLadder, renderVegaSkew,
 vegaChart, vegaSkewChart} from "../scripts/uicomponents/vegaChart.js";
 import {toISTDate} from "../scripts/utils/timeUtils.js";
 import {initGEXGradientChart, renderGEXGradientEChart, gexGradientChart} from "../scripts/uicomponents/gexGradientChart.js";
-import {isValidOC, processOptionChain, extractOC } from "../scripts/utils/ocUtils.js";
+import {isValidOC,
+    processOptionChain,
+    extractOC,
+    setOptionRows,
+    setOCUpdateTs,
+    getOptionRows,
+    getOCUpdateTs} from "../scripts/utils/ocUtils.js";
 import {computeGammaLadder, computeNetGEX, computeGammaFlip, computeGEXGradient,
 computeVegaLadder, computeVegaSkew} from "../scripts/services/optionChainService.js";
 
@@ -83,6 +89,25 @@ import { I3Buffer, pushI3 } from "../scripts/buffers/I3Buffer.js";
 
 import { initI2Chart, updateI2Chart } from "../scripts/uicomponents/I2Chart.js";
 import { initI3Chart, updateI3Chart } from "../scripts/uicomponents/I3Chart.js";
+import { ExpectedMoveEngine } from "../scripts/engines/ExpectedMoveEngine.js";
+import {
+    initExpectedMoveChart,
+    updateExpectedMoveChart,
+    resetExpectedMoveChart
+} from "../scripts/uicomponents/expectedMoveChart.js";
+import { TimeToMoveEngine } from "../scripts/engines/TimeToMoveEngine.js";
+import {
+    initTimeToMoveChart,
+    updateTimeToMoveChart,
+    resetTimeToMoveChart
+} from "../scripts/uicomponents/timeToMoveChart.js";
+import { StrikeReachProbabilityEngine } from "../scripts/engines/StrikeReachProbabilityEngine.js";
+import { StrikeScoringEngine } from "../scripts/engines/StrikeScoringEngine.js";
+
+
+
+
+
 const RealtimeRenderer = (() => {
 
     let chart = null
@@ -133,6 +158,18 @@ const RealtimeRenderer = (() => {
     const gammaEncoder = new GammaEncoder();
 
     const volEngine = new VolEngine();
+    const expectedMoveEngine = new ExpectedMoveEngine({ lookback: 50 });
+    const timeToMoveEngine = new TimeToMoveEngine({
+    maxHorizon: 500
+        });
+
+    const reachEngine = new StrikeReachProbabilityEngine();
+    const strikeScoringEngine = new StrikeScoringEngine();
+
+
+    window.TIME_UNIT = "seconds";   // or "minutes", "bars"
+
+
 
 
 
@@ -230,6 +267,18 @@ const RealtimeRenderer = (() => {
     attachOtherChartsSetOne();
 }
 
+ function getTimeUnitFromTF(tf) {
+            const map = {
+                "1m": "minutes",
+                "5m": "5-min blocks",
+                "15m": "15-min blocks",
+                "1h": "hours",
+                "1d": "days"
+            };
+
+            return map[tf] || "bars";
+        }
+
     function attachOtherChartsSetOne(){
         initNetGEXChart("netgex-panel");
         initIVStructureChart("iv-structure-detailed");
@@ -247,6 +296,12 @@ const RealtimeRenderer = (() => {
         initLiquidityChart("liquidityChart");
         initPositionSizingChart("positionSizingChart");
         initRegimeRiskChart("regimeRiskChart");
+        initExpectedMoveChart("expectedMoveChart");
+        const timeUnit = getTimeUnitFromTF(activeTimeframe);
+        window.TIME_UNIT = 'seconds';
+
+        initTimeToMoveChart("timeToMoveChart", timeUnit);
+
     }
 
 function updateLTPLine(ltp) {
@@ -954,6 +1009,56 @@ function getPriceHistoryFromBuffer(n = 100) {
 
     return result.reverse(); // oldest → newest
 }
+
+function computeApproxHV({ ltp, prevClose, scale = 16 }) {
+
+    if (!ltp || !prevClose) return null;
+
+    // 1. log return
+    const r = Math.log(ltp / prevClose);
+
+    // 2. absolute move (ignore direction)
+    const absR = Math.abs(r);
+
+    // 3. scale using √N
+    const hv = absR * Math.sqrt(scale);
+
+    return hv;
+}
+
+function resolveIV(buffer, fallbackHV = null, spot = null) {
+
+    // -------------------------
+    // 1. Try last valid IV
+    // -------------------------
+    const size = buffer.size;
+    const i = buffer.index;
+    const filled = buffer.filled;
+
+    const count = filled ? size : i;
+
+    for (let j = 0; j < count; j++) {
+        const idx = (i - 1 - j + size) % size;
+        const iv = buffer.atm_iv[idx];
+
+        if (iv != null && isFinite(iv)) {
+            return iv / 100;
+        }
+    }
+
+    // -------------------------
+    // 2. Fallback → HV
+    // -------------------------
+    if (fallbackHV && isFinite(fallbackHV)) {
+        return fallbackHV;
+    }
+
+    // -------------------------
+    // 3. Fallback → proxy (safe default)
+    // -------------------------
+    return 0.15;  // 15% baseline IV
+}
+
 function attach(features, key, value) {
     if (!features) return;
 
@@ -991,6 +1096,8 @@ function startWebSocket() {
                     console.warn("⚠️ No securityId yet");
                 }
             };
+
+
 
     ws.onmessage = (event) => {
     let data;
@@ -1143,6 +1250,229 @@ function startWebSocket() {
         attach(features, "G2", g2);
         attach(features, "zone", zone);
         } catch (e) {}
+
+    let expectedMoveData = null;
+    const hv = computeApproxHV({
+                ltp: data.ltp,
+                prevClose: data.close,
+                scale: 16
+            }) || 0.01;
+
+    try {
+        if (dS && isFinite(dS.dS_adj)) {
+
+
+
+
+            expectedMoveData = expectedMoveEngine.compute({
+                dS: dS.dS_adj,
+                I1: core.I1,
+                hv,
+                marketBuffer,
+                price: currentSpot
+            });
+
+            if (expectedMoveData) {
+                attach(features, "expectedMove", expectedMoveData.expectedMove);
+                attach(features, "lambda", expectedMoveData.lambda);
+                attach(features, "beta", expectedMoveData.beta);
+            }
+        }
+    } catch (e) {
+        console.warn("ExpectedMove error", e);
+    }
+    if (expectedMoveData) {
+            updateExpectedMoveChart({
+                expectedMove: expectedMoveData.expectedMove,
+                lambda: expectedMoveData.lambda,
+                timestamp: ts
+            });
+        }
+
+    let timeData = null;
+
+    try {
+        if (expectedMoveData && dS) {
+
+            timeData = timeToMoveEngine.compute({
+                expectedMove: expectedMoveData.expectedMove,
+                dS: dS.dS_adj,
+                I1: core.I1,
+                liquidity: features.liquidity,
+                regime: features.regime,
+                trap: features.zone === "trap"
+            });
+
+            if (timeData) {
+                attach(features, "timeToMove", timeData.timeToMove);
+                attach(features, "velocity", timeData.velocity);
+                attach(features, "speedClass", timeData.speedClass);
+            }
+        }
+    } catch (e) {
+        console.warn("TimeToMove error", e);
+    }
+    if (timeData) {
+            updateTimeToMoveChart({
+                timeToMove: timeData.timeToMove,
+                velocity: timeData.velocity,
+                timestamp: ts
+            });
+        }
+
+    let strikeData = null;
+
+    try {
+        if (features.expectedMove && lastGammaLadder) {
+
+            const optionRows = lastGammaLadder.map(x => ({
+                strike: x.strike
+            }));
+
+            strikeData = getStrikeFromExpectedMove({
+                spot: currentSpot,
+                expectedMove: features.expectedMove,
+                optionRows,
+                direction: "call"
+            });
+
+            if (strikeData) {
+                attach(features, "selectedStrike", strikeData.strike);
+            }
+        }
+    } catch (e) {
+        console.warn("Strike selection error", e);
+    }
+
+    console.log('volFeatureBuffer', volFeatureBuffer);
+    const iv = resolveIV(
+        volFeatureBuffer,
+        hv,
+        currentSpot
+    );
+    const reach = reachEngine.compute({
+            S: currentSpot,
+            K: strikeData?.strike,
+            expectedMove: features.expectedMove,
+            timeToMove: features.timeToMove,
+            iv,
+            unit: "seconds"
+        });
+
+    attach(features, "reachProb", reach?.probability);
+
+   let reachProbMap = {};
+
+    try {
+        const lastOptionRows = getOptionRows();
+
+        const lastOCUpdateTs  = getOCUpdateTs();
+        if (
+            lastOptionRows &&
+            features.expectedMove &&
+            features.timeToMove &&
+            volFeatureBuffer?.data?.length
+        ) {
+
+            // -----------------------------
+            // 1. Freshness Check (CRITICAL)
+            // -----------------------------
+            const OC_STALE_MS = 30000;
+
+            if (
+                !lastOCUpdateTs ||
+                (Date.now() - lastOCUpdateTs > OC_STALE_MS)
+            ) {
+                return; // skip stale OC
+            }
+
+            // -----------------------------
+            // 2. IV Extraction
+            // -----------------------------
+            let iv =
+                volFeatureBuffer.data.at(-1)?.atm_iv;
+
+            if (!iv || !isFinite(iv)) {
+                return;
+            }
+
+            iv = iv / 100; // convert %
+
+            // -----------------------------
+            // 3. Restrict Strike Range (🔥 BIG OPTIMIZATION)
+            // -----------------------------
+            const move = Math.abs(features.expectedMove);
+
+            const lowerBound = currentSpot - 1.5 * move;
+            const upperBound = currentSpot + 1.5 * move;
+
+            // -----------------------------
+            // 4. Compute Reach Probabilities
+            // -----------------------------
+            for (const row of lastOptionRows) {
+
+                const strike = row.strike;
+
+                // ---- Range filter
+                if (strike < lowerBound || strike > upperBound) continue;
+
+                // -----------------------------
+                // 5. Liquidity Filter (NEW)
+                // -----------------------------
+                const ce = row.ce;
+                const pe = row.pe;
+
+                const oi =
+                    (ce?.oi || 0) +
+                    (pe?.oi || 0);
+
+                const volume =
+                    (ce?.volume || 0) +
+                    (pe?.volume || 0);
+
+                if (oi < 500 || volume < 100) continue;
+
+                // -----------------------------
+                // 6. Spread Filter (NEW)
+                // -----------------------------
+                const ceSpread =
+                    (ce?.ask_price || 0) -
+                    (ce?.bid_price || 0);
+
+                const peSpread =
+                    (pe?.ask_price || 0) -
+                    (pe?.bid_price || 0);
+
+                const spread = Math.max(ceSpread, peSpread);
+
+                if (!isFinite(spread) || spread > 20) continue;
+
+                // -----------------------------
+                // 7. Compute Reach Probability
+                // -----------------------------
+                const reach = reachEngine.compute({
+                    S: currentSpot,
+                    K: strike,
+                    expectedMove: features.expectedMove,
+                    timeToMove: features.timeToMove,
+                    iv,
+                    unit: "seconds"
+                });
+
+                if (!reach || !isFinite(reach.probability)) continue;
+
+                // -----------------------------
+                // 8. Clamp Probability (STABILITY)
+                // -----------------------------
+                const prob =
+                    Math.max(0.01, Math.min(0.99, reach.probability));
+
+                reachProbMap[strike] = prob;
+            }
+        }
+    } catch (e) {
+        console.warn("ReachProbMap error", e);
+    }
 
     // ==================================================
     // 5. REGIME (OPTIONAL, NEVER BLOCK)
@@ -1672,6 +2002,8 @@ async function updateOptionChain(symbol, security_id) {
         const ts = Date.now()
 
         const result = processOptionChain(ocToUse);
+        setOptionRows(result.rows);
+        setOCUpdateTs(Date.now());
         const flip = computeGammaFlip(result.gammaLadder);
 
         updateNetGEXBuffer(netGEXBuffer, {
@@ -1926,6 +2258,8 @@ async function resolveOC({ symbol, security_id, lotSize}){
          // 🔥 Process only if we have valid OC
         if (ocToUse) {
                 const result = processOptionChain(ocToUse);
+                setOptionRows(result.rows);
+                setOCUpdateTs(Date.now());
                 const flip = computeGammaFlip(result.gammaLadder);
 
                 lastGammaLadder = result.gammaLadder;
