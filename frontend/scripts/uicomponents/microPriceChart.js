@@ -263,3 +263,36 @@ function computeStats(arr, window = 200) {
 
     return { mean, sd };
 }
+
+/**
+ * ----------------------------------------
+ * RESET
+ * ----------------------------------------
+ */
+export function resetMicroChart() {
+    if (!microChart || microChart.isDisposed?.()) return;
+
+    microChart.setOption({
+        xAxis: {
+            data: []
+        },
+        yAxis: {
+            scale: true
+        },
+        series: [
+            { data: [] }, // Microprice
+            { data: [] }, // LTP
+            { data: [] }, // Micro +1σ
+            { data: [] }, // Micro -1σ
+            { data: [] }, // LTP +1σ
+            { data: [] }  // LTP -1σ
+        ]
+    });
+
+    // Reset zoom state (important for long sessions)
+    microChart.dispatchAction({
+        type: 'dataZoom',
+        start: 0,
+        end: 100
+    });
+}

@@ -273,3 +273,13 @@ export function renderRRP(series) {
         ]
     });
 }
+
+export function resetRRPChartHard(panelId) {
+
+    if (rrpChart) {
+        rrpChart.dispose();
+        rrpChart = null;
+    }
+
+    initRRPChart(panelId);
+}

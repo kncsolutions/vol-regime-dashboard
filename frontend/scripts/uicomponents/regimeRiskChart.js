@@ -107,3 +107,13 @@ export function updateRegimeRiskChart(probs, impactRisk, timestamp) {
 
     regimeRiskChart.setOption(option);
 }
+
+export function resetRegimeRiskChart(panelId) {
+
+    if (regimeRiskChart) {
+        regimeRiskChart.dispose();
+        regimeRiskChart = null;
+    }
+
+    initRegimeRiskChart(panelId);
+}

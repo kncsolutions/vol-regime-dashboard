@@ -82,7 +82,11 @@ export function initTimeToMoveChart(panelId, timeUnit = "bars") {
                 data: [],
                 smooth: true
             }
-        ]
+        ],
+        dataZoom: [
+            { type: 'inside' },
+            { type: 'slider', height: 25, bottom: 30 }
+        ],
     });
 }
 

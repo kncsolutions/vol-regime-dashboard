@@ -1,109 +1,150 @@
+// Models
 import { FeatureEngine } from "../scripts/models/FeatureEngine.js";
 import { RRPModel } from "../scripts/models/RRPModel.js";
+
+// Engines
 import { GammaEngine } from "../scripts/engines/GammaEngine.js";
 import { ReflexivityEngine } from "../scripts/engines/ReflexivityEngine.js";
-import { GammaEncoder } from "../scripts/encoders/GammaEncoder.js";
 import { VolEngine } from "../scripts/engines/VolEngine.js";
-import { marketBuffer, updateMarketBuffer, resetMarketBuffer } from "../scripts/buffers/marketBuffer.js";
-import { netGEXBuffer, resetNetGEXBuffer , updateNetGEXBuffer} from "../scripts/buffers/netGEXBuffer.js";
-import {gammaBuffer, updateGammaBuffer, resetGammaBuffer}  from "../scripts/buffers/gammaBuffer.js";
-import {netGEXChart, initNetGEXChart, updateNetGEXChart }  from "../scripts/uicomponents/netGEXBufferplots.js";
-import {volFeatureBuffer, resetVolFeatureBuffer, updateVolFeatureBuffer} from "../scripts/buffers/volFeatureBuffer.js";
-import {initIVStructureChart, updateIVStructureChart, resetIVStructureChart, plotIVChart,
-plotIVStructure, ivChart,
-ivData, hvData,skewData, curvatureData ,
-callSkewData , putSkewData } from "../scripts/uicomponents/ivStructureChart.js";
-import { marketState } from "../scripts/buffers/marketStateBuffer.js";
-import {initMicroChart, updateMicroChart, microChart} from "../scripts/uicomponents/microPriceChart.js";
-import {initImbalanceChart, updateImbalanceChart, imbalanceChart} from "../scripts/uicomponents/imbalanceChart.js";
-import {initFlowChart, updateFlowChart, flowChart} from "../scripts/uicomponents/flowDirectionChart.js";
-import {initLBAChart, updateLBAChart, lbaChart} from "../scripts/uicomponents/lbaChart.js";
-import {initAlphaChart, updateAlphaChart, alphaChart} from "../scripts/uicomponents/alphaChart.js";
-import {initRRPChart, renderRRP, rrpChart} from "../scripts/uicomponents/rrpChart.js";
-import {initOIChart, initOIChangeChart, renderOI, renderOIChange,
-oiChart, oiChangeChart} from "../scripts/uicomponents/oiChart.js";
-import {initVegaChart, initVegaSkewChart, renderVegaLadder, renderVegaSkew,
-vegaChart, vegaSkewChart} from "../scripts/uicomponents/vegaChart.js";
-import {toISTDate} from "../scripts/utils/timeUtils.js";
-import {initGEXGradientChart, renderGEXGradientEChart, gexGradientChart} from "../scripts/uicomponents/gexGradientChart.js";
-import {isValidOC,
-    processOptionChain,
-    extractOC,
-    setOptionRows,
-    setOCUpdateTs,
-    getOptionRows,
-    getOCUpdateTs} from "../scripts/utils/ocUtils.js";
-import {computeGammaLadder, computeNetGEX, computeGammaFlip, computeGEXGradient,
-computeVegaLadder, computeVegaSkew} from "../scripts/services/optionChainService.js";
-
-import {getGammaRegime} from "../scripts/logics/gammaState.js";
-
-import {reflexivityState} from "../scripts/buffers/reflexivityState.js"
-import {rrpSeries} from "../scripts/buffers/rrpSeries.js"
-
-import {computeHVFromSpotPrevClose} from "../scripts/services/hvService.js"
-
-
-import { computeI1 } from "../scripts/utils/instability.js";
-import { I1Buffer,pushI1 } from "../scripts/buffers/I1Buffer.js";
-
-import {I1Chart, initI1Chart, updateI1Chart} from "../scripts/uicomponents/linearInstabilityI1Chart.js"
-
 import { ImpactEngine } from "../scripts/engines/ImpactEngine.js";
-//import { WebSocketManager } from "../scripts/core/websocket/WebSocketManager.js";
+import { LiquidityEngine } from "../scripts/engines/LiquidityEngine.js";
+import { PositionSizingEngine } from "../scripts/engines/PositionSizingEngine.js";
+import { RegimeEngine } from "../scripts/engines/RegimeEngine.js";
+import { DecisionPolicy } from "../scripts/engines/DecisionPolicy.js";
+import { DSEngine } from "../scripts/engines/DSEngine.js";
+import { I2Engine } from "../scripts/engines/I2Engine.js";
+import { I3Engine } from "../scripts/engines/I3Engine.js";
+import { ExpectedMoveEngine } from "../scripts/engines/ExpectedMoveEngine.js";
+import { TimeToMoveEngine } from "../scripts/engines/TimeToMoveEngine.js";
+import { StrikeReachProbabilityEngine } from "../scripts/engines/StrikeReachProbabilityEngine.js";
+import { StrikeScoringEngine } from "../scripts/engines/StrikeScoringEngine.js";
 
+
+//BUFFERS (State Layer)
+
+import { marketBuffer, updateMarketBuffer, resetMarketBuffer } from "../scripts/buffers/marketBuffer.js";
+import { netGEXBuffer, updateNetGEXBuffer, resetNetGEXBuffer } from "../scripts/buffers/netGEXBuffer.js";
+import { gammaBuffer, updateGammaBuffer, resetGammaBuffer } from "../scripts/buffers/gammaBuffer.js";
+import { volFeatureBuffer, updateVolFeatureBuffer, resetVolFeatureBuffer } from "../scripts/buffers/volFeatureBuffer.js";
+
+import { I1Buffer, pushI1, resetI1BufferHard } from "../scripts/buffers/I1Buffer.js";
+import { I2Buffer, pushI2, resetI2BufferHard } from "../scripts/buffers/I2Buffer.js";
+import { I3Buffer, pushI3, resetI3BufferHard } from "../scripts/buffers/I3Buffer.js";
+
+import { dSBuffer, pushdS, resetdSBufferHard } from "../scripts/buffers/dsBuffer.js";
+
+import { marketState } from "../scripts/buffers/marketStateBuffer.js";
+import { reflexivityState } from "../scripts/buffers/reflexivityState.js";
+import { rrpSeries } from "../scripts/buffers/rrpSeries.js";
+
+
+// GEX / IV
+import { netGEXChart, initNetGEXChart, updateNetGEXChart } from "../scripts/uicomponents/netGEXBufferplots.js";
+import {
+    initIVStructureChart, updateIVStructureChart, resetIVStructureChart,
+    plotIVChart, plotIVStructure,
+    ivChart, ivData, hvData, skewData, curvatureData,
+    callSkewData, putSkewData
+} from "../scripts/uicomponents/ivStructureChart.js";
+
+// Microstructure
+import { initMicroChart, updateMicroChart, microChart, resetMicroChart } from "../scripts/uicomponents/microPriceChart.js";
+import { initImbalanceChart, updateImbalanceChart, imbalanceChart, resetImbalanceChart } from "../scripts/uicomponents/imbalanceChart.js";
+import { initFlowChart, updateFlowChart, flowChart } from "../scripts/uicomponents/flowDirectionChart.js";
+import { initLBAChart, updateLBAChart, lbaChart } from "../scripts/uicomponents/lbaChart.js";
+import { initAlphaChart, updateAlphaChart, alphaChart } from "../scripts/uicomponents/alphaChart.js";
+
+// RRP / Profile
+import { initRRPChart, renderRRP, rrpChart, resetRRPChartHard } from "../scripts/uicomponents/rrpChart.js";
+
+// Options / Greeks
+import { initOIChart, initOIChangeChart, renderOI, renderOIChange, oiChart, oiChangeChart } from "../scripts/uicomponents/oiChart.js";
+import { initVegaChart, initVegaSkewChart, renderVegaLadder, renderVegaSkew, vegaChart, vegaSkewChart } from "../scripts/uicomponents/vegaChart.js";
+import { initGEXGradientChart, renderGEXGradientEChart, gexGradientChart } from "../scripts/uicomponents/gexGradientChart.js";
+
+// Instability
+import { I1Chart, initI1Chart, updateI1Chart } from "../scripts/uicomponents/linearInstabilityI1Chart.js";
+import { initI2Chart, updateI2Chart } from "../scripts/uicomponents/I2Chart.js";
+import { initI3Chart, updateI3Chart } from "../scripts/uicomponents/I3Chart.js";
+
+// Regime / Risk
+import {
+    initRegimeRiskChart,
+    updateRegimeRiskChart,
+    resetRegimeRiskChart
+} from "../scripts/uicomponents/regimeRiskChart.js";
+
+// Impact / Liquidity / Position
 import {
     initImpactChart,
     updateImpactChart,
     resetImpactChart
 } from "../scripts/uicomponents/impactChart.js";
-import { LiquidityEngine } from "../scripts/engines/LiquidityEngine.js";
+
 import {
     initLiquidityChart,
     updateLiquidityChart,
     resetLiquidityChart
 } from "../scripts/uicomponents/liquidityChart.js";
 
-import { PositionSizingEngine } from "../scripts/engines/PositionSizingEngine.js";
 import {
     initPositionSizingChart,
     updatePositionSizingChart,
     resetPositionSizingChart
 } from "../scripts/uicomponents/positionSizingChart.js";
-import { RegimeEngine } from "../scripts/engines/RegimeEngine.js";
-import { DecisionPolicy} from "../scripts/engines/DecisionPolicy.js";
-import {
-    initRegimeRiskChart,
-    updateRegimeRiskChart
-} from "../scripts/uicomponents/regimeRiskChart.js";
-import {dSBuffer, pushdS} from "../scripts/buffers/dsBuffer.js";
-import {classifyZone, computeG2} from "../scripts/classification/flowDsClassification.js";
-import {initdSChart, updatedSChart} from "../scripts/uicomponents/dsChart.js";
-import {DSEngine} from "../scripts/engines/DSEngine.js";
 
-import { I2Engine } from "../scripts/engines/I2Engine.js";
-import { I3Engine } from "../scripts/engines/I3Engine.js";
-
-import { I2Buffer, pushI2 } from "../scripts/buffers/I2Buffer.js";
-import { I3Buffer, pushI3 } from "../scripts/buffers/I3Buffer.js";
-
-import { initI2Chart, updateI2Chart } from "../scripts/uicomponents/I2Chart.js";
-import { initI3Chart, updateI3Chart } from "../scripts/uicomponents/I3Chart.js";
-import { ExpectedMoveEngine } from "../scripts/engines/ExpectedMoveEngine.js";
+// Expected Move
 import {
     initExpectedMoveChart,
     updateExpectedMoveChart,
     resetExpectedMoveChart
 } from "../scripts/uicomponents/expectedMoveChart.js";
-import { TimeToMoveEngine } from "../scripts/engines/TimeToMoveEngine.js";
+
 import {
     initTimeToMoveChart,
     updateTimeToMoveChart,
     resetTimeToMoveChart
 } from "../scripts/uicomponents/timeToMoveChart.js";
-import { StrikeReachProbabilityEngine } from "../scripts/engines/StrikeReachProbabilityEngine.js";
-import { StrikeScoringEngine } from "../scripts/engines/StrikeScoringEngine.js";
 
+// Reach Probability
+import {
+    reachProbChart,
+    initReachProbChart,
+    updateReachProbChart
+} from "../scripts/uicomponents/ReachProbPlotter.js";
+
+// dS
+import { initdSChart, updatedSChart } from "../scripts/uicomponents/dsChart.js";
+
+import {
+    computeGammaLadder,
+    computeNetGEX,
+    computeGammaFlip,
+    computeGEXGradient,
+    computeVegaLadder,
+    computeVegaSkew
+} from "../scripts/services/optionChainService.js";
+
+import { computeHVFromSpotPrevClose } from "../scripts/services/hvService.js";
+
+import { toISTDate } from "../scripts/utils/timeUtils.js";
+
+import {
+    isValidOC,
+    processOptionChain,
+    extractOC,
+    setOptionRows,
+    setOCUpdateTs,
+    getOptionRows,
+    getOCUpdateTs,
+    getStrikeFromExpectedMove
+} from "../scripts/utils/ocUtils.js";
+
+import { computeI1 } from "../scripts/utils/instability.js";
+import { classifyZone, computeG2 } from "../scripts/classification/flowDsClassification.js";
+
+import { getGammaRegime } from "../scripts/logics/gammaState.js";
+import { GammaEncoder } from "../scripts/encoders/GammaEncoder.js";
 
 
 
@@ -165,6 +206,7 @@ const RealtimeRenderer = (() => {
 
     const reachEngine = new StrikeReachProbabilityEngine();
     const strikeScoringEngine = new StrikeScoringEngine();
+
 
 
     window.TIME_UNIT = "seconds";   // or "minutes", "bars"
@@ -301,6 +343,9 @@ const RealtimeRenderer = (() => {
         window.TIME_UNIT = 'seconds';
 
         initTimeToMoveChart("timeToMoveChart", timeUnit);
+        initReachProbChart("reachChart");
+
+
 
     }
 
@@ -1059,16 +1104,26 @@ function resolveIV(buffer, fallbackHV = null, spot = null) {
     return 0.15;  // 15% baseline IV
 }
 
-function attach(features, key, value) {
-    if (!features) return;
+    function getLastValid(arr) {
+        for (let i = arr.length - 1; i >= 0; i--) {
+            const v = arr[i];
+            if (v != null && !Number.isNaN(v)) {
+                return v;
+            }
+        }
+        return null;
+    }
 
-    if (value === undefined) return;
+    function attach(features, key, value) {
+        if (!features) return;
 
-    // optional: filter NaN
-    if (typeof value === "number" && !isFinite(value)) return;
+        if (value === undefined) return;
 
-    features[key] = value;
-}
+        // optional: filter NaN
+        if (typeof value === "number" && !isFinite(value)) return;
+
+        features[key] = value;
+    }
 //Web socket----------------------
 function startWebSocket() {
     if (ws) {
@@ -1325,9 +1380,11 @@ function startWebSocket() {
     try {
         if (features.expectedMove && lastGammaLadder) {
 
+
             const optionRows = lastGammaLadder.map(x => ({
                 strike: x.strike
             }));
+
 
             strikeData = getStrikeFromExpectedMove({
                 spot: currentSpot,
@@ -1335,6 +1392,7 @@ function startWebSocket() {
                 optionRows,
                 direction: "call"
             });
+
 
             if (strikeData) {
                 attach(features, "selectedStrike", strikeData.strike);
@@ -1344,7 +1402,8 @@ function startWebSocket() {
         console.warn("Strike selection error", e);
     }
 
-    console.log('volFeatureBuffer', volFeatureBuffer);
+
+
     const iv = resolveIV(
         volFeatureBuffer,
         hv,
@@ -1360,119 +1419,143 @@ function startWebSocket() {
         });
 
     attach(features, "reachProb", reach?.probability);
+   console.log("reachProb", reach?.probability);
 
    let reachProbMap = {};
 
-    try {
-        const lastOptionRows = getOptionRows();
+   try {
+    const lastOptionRows = getOptionRows();
+    const lastOCUpdateTs = getOCUpdateTs();
+    const lastIV = getLastValid(volFeatureBuffer.atm_iv);
+//    console.log('oc:',lastOptionRows);
 
-        const lastOCUpdateTs  = getOCUpdateTs();
-        if (
-            lastOptionRows &&
-            features.expectedMove &&
-            features.timeToMove &&
-            volFeatureBuffer?.data?.length
-        ) {
+    // -----------------------------
+    // 1. Hard Guards (fail fast)
+    // -----------------------------
+    if (
+        lastOptionRows &&
+        features.expectedMove &&
+        features.timeToMove &&
+        lastIV != null
+    ) {
 
+        const oc = lastOptionRows?.data?.data?.oc;
+//        console.log('oc:',oc);
+
+        if (oc){
             // -----------------------------
-            // 1. Freshness Check (CRITICAL)
+            // 2. Freshness Check
             // -----------------------------
-            const OC_STALE_MS = 30000;
+            const OC_STALE_MS = 300;
+             if (lastOCUpdateTs &&  (Date.now() - lastOCUpdateTs > OC_STALE_MS)) {
+             // -----------------------------
+                // 3. IV Normalization
+                // -----------------------------
+                let iv = lastIV;
+                if (!isFinite(iv)) return;
+                iv = iv / 100;
+                console.log('IV:',iv);
 
-            if (
-                !lastOCUpdateTs ||
-                (Date.now() - lastOCUpdateTs > OC_STALE_MS)
-            ) {
-                return; // skip stale OC
+                // -----------------------------
+                // 4. Range Setup (symmetric)
+                // -----------------------------
+                const move = Math.abs(features.expectedMove);
+                const lowerBound = currentSpot * 0.92;
+                const upperBound = currentSpot * 1.08;
+
+                // -----------------------------
+                // 5. Main Loop (no allocations)
+                // -----------------------------
+                for (const strikeStr in oc) {
+
+                    const row = oc[strikeStr];
+                    const strike = +strikeStr;
+
+
+                    if (!isFinite(strike)) continue;
+
+                    // ---- Range filter
+                    if (strike < lowerBound || strike > upperBound) continue;
+//                    console.log('strike:', strike)
+
+                    const ce = row.ce;
+                    const pe = row.pe;
+//                    console.log('ce:',ce);
+
+                    // -----------------------------
+                    // 6. Liquidity Filter
+                    // -----------------------------
+                    const oi =
+                        (ce?.oi || 0) +
+                        (pe?.oi || 0);
+
+                    const volume =
+                        (ce?.volume || 0) +
+                        (pe?.volume || 0);
+
+                    if (oi < 500 || volume < 100) continue;
+//                    console.log('strike:', strike)
+
+                    // -----------------------------
+                    // 7. Spread Filter
+                    // -----------------------------
+                    const ceSpread =
+                        (ce?.top_ask_price || 0) -
+                        (ce?.top_bid_price || 0);
+
+                    const peSpread =
+                        (pe?.top_ask_price || 0) -
+                        (pe?.top_bid_price || 0);
+
+                    const spread = ceSpread > peSpread ? ceSpread : peSpread;
+
+                    if (!isFinite(spread) || spread > 20) continue;
+
+                    // -----------------------------
+                    // 8. Reach Probability
+                    // -----------------------------
+                    const reach = reachEngine.compute({
+                        S: currentSpot,
+                        K: strike,
+                        expectedMove: features.expectedMove,
+                        timeToMove: features.timeToMove,
+                        iv,
+                        unit: "seconds"
+                    });
+
+                    if (!reach) continue;
+
+                    let prob = reach.probability;
+                    if (!isFinite(prob)) continue;
+
+                    // clamp
+                    prob = prob < 0.01 ? 0.01 : (prob > 0.99 ? 0.99 : prob);
+
+                    reachProbMap[strike] = prob;
+                }
+
             }
 
-            // -----------------------------
-            // 2. IV Extraction
-            // -----------------------------
-            let iv =
-                volFeatureBuffer.data.at(-1)?.atm_iv;
 
-            if (!iv || !isFinite(iv)) {
-                return;
-            }
-
-            iv = iv / 100; // convert %
-
-            // -----------------------------
-            // 3. Restrict Strike Range (🔥 BIG OPTIMIZATION)
-            // -----------------------------
-            const move = Math.abs(features.expectedMove);
-
-            const lowerBound = currentSpot - 1.5 * move;
-            const upperBound = currentSpot + 1.5 * move;
-
-            // -----------------------------
-            // 4. Compute Reach Probabilities
-            // -----------------------------
-            for (const row of lastOptionRows) {
-
-                const strike = row.strike;
-
-                // ---- Range filter
-                if (strike < lowerBound || strike > upperBound) continue;
-
-                // -----------------------------
-                // 5. Liquidity Filter (NEW)
-                // -----------------------------
-                const ce = row.ce;
-                const pe = row.pe;
-
-                const oi =
-                    (ce?.oi || 0) +
-                    (pe?.oi || 0);
-
-                const volume =
-                    (ce?.volume || 0) +
-                    (pe?.volume || 0);
-
-                if (oi < 500 || volume < 100) continue;
-
-                // -----------------------------
-                // 6. Spread Filter (NEW)
-                // -----------------------------
-                const ceSpread =
-                    (ce?.ask_price || 0) -
-                    (ce?.bid_price || 0);
-
-                const peSpread =
-                    (pe?.ask_price || 0) -
-                    (pe?.bid_price || 0);
-
-                const spread = Math.max(ceSpread, peSpread);
-
-                if (!isFinite(spread) || spread > 20) continue;
-
-                // -----------------------------
-                // 7. Compute Reach Probability
-                // -----------------------------
-                const reach = reachEngine.compute({
-                    S: currentSpot,
-                    K: strike,
-                    expectedMove: features.expectedMove,
-                    timeToMove: features.timeToMove,
-                    iv,
-                    unit: "seconds"
-                });
-
-                if (!reach || !isFinite(reach.probability)) continue;
-
-                // -----------------------------
-                // 8. Clamp Probability (STABILITY)
-                // -----------------------------
-                const prob =
-                    Math.max(0.01, Math.min(0.99, reach.probability));
-
-                reachProbMap[strike] = prob;
-            }
         }
-    } catch (e) {
-        console.warn("ReachProbMap error", e);
+
+
+
+
+
+
     }
+
+    } catch (e) {
+        console.warn("ReachProbMap error:", e);
+    }
+    console.log("ReachProbMap:", reachProbMap);
+    if(reachProbMap){
+
+
+        // inside your render loop
+        updateReachProbChart(reachProbMap);
+        }
 
     // ==================================================
     // 5. REGIME (OPTIONAL, NEVER BLOCK)
@@ -1851,8 +1934,18 @@ function setActiveStock(symbol) {
     resetVolFeatureBuffer();
     resetIVStructureChart();
     resetNetGEXBuffer();   // ✅ ADD THIS
+    resetdSBufferHard();
+    resetI1BufferHard();
+    resetI2BufferHard();
+    resetI3BufferHard();
     resetImpactChart();
     resetLiquidityChart();
+    resetImbalanceChart();
+    resetMicroChart();
+    resetExpectedMoveChart();
+    resetTimeToMoveChart();
+    resetRegimeRiskChart("regimeRiskChart");
+    resetRRPChartHard("rrpChart");
 
 
     const input = document.getElementById("stockSelectchart")
@@ -2000,9 +2093,10 @@ async function updateOptionChain(symbol, security_id) {
 
         if (!ocToUse) return;
         const ts = Date.now()
+        console.log('ocToUse:', ocToUse);
 
         const result = processOptionChain(ocToUse);
-        setOptionRows(result.rows);
+        setOptionRows(ocToUse);
         setOCUpdateTs(Date.now());
         const flip = computeGammaFlip(result.gammaLadder);
 
@@ -2257,8 +2351,9 @@ async function resolveOC({ symbol, security_id, lotSize}){
         }
          // 🔥 Process only if we have valid OC
         if (ocToUse) {
+        console.log('ocToUse:', ocToUse);
                 const result = processOptionChain(ocToUse);
-                setOptionRows(result.rows);
+                setOptionRows(ocToUse);
                 setOCUpdateTs(Date.now());
                 const flip = computeGammaFlip(result.gammaLadder);
 

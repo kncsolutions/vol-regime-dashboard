@@ -20,3 +20,7 @@ export function pushdS(dS, flow, G2, zone, timestamp) {
         dSBuffer.data.shift();
     }
 }
+
+export function resetdSBufferHard() {
+    dSBuffer.data = [];
+}

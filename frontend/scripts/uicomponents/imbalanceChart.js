@@ -277,3 +277,35 @@ export function updateImbalanceChart(marketBuffer) {
         ]
     });
 }
+
+/**
+ * ----------------------------------------
+ * RESET
+ * ----------------------------------------
+ */
+export function resetImbalanceChart() {
+    if (!imbalanceChart || imbalanceChart.isDisposed?.()) return;
+
+    // Clear all series + axes data but keep instance alive
+    imbalanceChart.setOption({
+        xAxis: [
+            { data: [] },
+            { }
+        ],
+        yAxis: [
+            { },
+            { data: [] }
+        ],
+        series: [
+            { data: [] },
+            { data: [] }
+        ]
+    });
+
+    // Optional: remove any zoom state
+    imbalanceChart.dispatchAction({
+        type: 'dataZoom',
+        start: 0,
+        end: 100
+    });
+}

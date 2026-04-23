@@ -15,3 +15,8 @@ export function pushI1(value, ts) {
         I1Buffer.timestamps.shift();
     }
 }
+
+export function resetI1BufferHard() {
+    I1Buffer.data = [];
+    I1Buffer.timestamps = [];
+}

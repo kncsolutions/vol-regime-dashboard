@@ -15,3 +15,12 @@ export function pushI2(I2, timestamp) {
         I2Buffer.data.shift();
     }
 }
+
+/**
+ * ----------------------------------------
+ * RESET I2 BUFFER
+ * ----------------------------------------
+ */
+export function resetI2BufferHard() {
+    I2Buffer.data = [];
+}

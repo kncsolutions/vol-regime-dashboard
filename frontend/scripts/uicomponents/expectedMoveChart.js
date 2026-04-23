@@ -68,7 +68,11 @@ export function initExpectedMoveChart(panelId) {
                 data: [],
                 smooth: true
             }
-        ]
+        ],
+        dataZoom: [
+            { type: 'inside' },
+            { type: 'slider', height: 25, bottom: 30 }
+        ],
     });
 }
 

@@ -15,3 +15,12 @@ export function pushI3(I3, timestamp) {
         I3Buffer.data.shift();
     }
 }
+
+/**
+ * ----------------------------------------
+ * RESET I3 BUFFER
+ * ----------------------------------------
+ */
+export function resetI3BufferHard() {
+    I3Buffer.data = [];
+}
