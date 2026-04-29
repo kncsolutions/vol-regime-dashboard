@@ -142,6 +142,9 @@ import {
 
 import { computeI1 } from "../scripts/utils/instability.js";
 import { classifyZone, computeG2 } from "../scripts/classification/flowDsClassification.js";
+import { buildSnapshot } from "../scripts/utils/snapshotModule.js";
+
+
 
 import { getGammaRegime } from "../scripts/logics/gammaState.js";
 import { GammaEncoder } from "../scripts/encoders/GammaEncoder.js";
@@ -171,6 +174,7 @@ const RealtimeRenderer = (() => {
     let ltpLine = null;
     let isLoading = false;
     let gammaFlipLine = null;  // ✅ ADD THIS
+    let currentGammaFlip = null;   // ✅ ADD THIS
     let lastGammaLadder = null;
     let currentSpot = null;
     let prevClose = null;
@@ -247,6 +251,44 @@ const RealtimeRenderer = (() => {
             }
     }
 })
+
+document.getElementById("snapshotBtn").onclick = () => {
+
+    const snapshot = buildSnapshot({
+        I1Buffer,
+        I2Buffer,
+        I3Buffer,
+        dSBuffer,
+        volFeatureBuffer,
+        marketBuffer,
+        marketState,
+        currentSpot,
+        currentGammaFlip,
+        window: 200
+    });
+
+    console.log("📸 Snapshot (σ-filtered):", snapshot);
+
+    downloadCSV(snapshot);
+};
+
+function downloadCSV(snapshot) {
+
+    const headers = Object.keys(snapshot).join(",");
+    const values = Object.values(snapshot).join(",");
+
+    const csv = headers + "\n" + values;
+
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `snapshot_${Date.now()}.csv`;
+    a.click();
+
+    URL.revokeObjectURL(url);
+}
 
     //--------------------------------------------------
     // 🧱 INIT CHART
@@ -360,6 +402,8 @@ function updateLTPLine(ltp) {
 
 function drawGammaFlip(flipPrice) {
     if (!candleSeries || !flipPrice) return;
+    // ✅ STORE DATA
+    currentGammaFlip = flipPrice;
 
     // remove old line
     if (gammaFlipLine) {
@@ -1140,9 +1184,9 @@ function startWebSocket() {
 
                 if (currentSecurityId) {
                     if (currentSecurityName == 'NIFTY')
-                        socketSecurityId = 66691
+                        socketSecurityId = 66071
                     else if (currentSecurityName == 'BANKNIFTY')
-                        socketSecurityId = 66688
+                        socketSecurityId = 66068
                     else
                         socketSecurityId = currentSecurityId
 
@@ -1939,13 +1983,13 @@ function setActiveStock(symbol) {
     resetI2BufferHard();
     resetI3BufferHard();
     resetImpactChart();
-    resetLiquidityChart();
-    resetImbalanceChart();
-    resetMicroChart();
-    resetExpectedMoveChart();
-    resetTimeToMoveChart();
-    resetRegimeRiskChart("regimeRiskChart");
-    resetRRPChartHard("rrpChart");
+//    resetLiquidityChart();
+//    resetImbalanceChart();
+//    resetMicroChart();
+//    resetExpectedMoveChart("expectedMoveChart");
+//    resetTimeToMoveChart();
+//    resetRegimeRiskChart("regimeRiskChart");
+//    resetRRPChartHard("rrpChart");
 
 
     const input = document.getElementById("stockSelectchart")

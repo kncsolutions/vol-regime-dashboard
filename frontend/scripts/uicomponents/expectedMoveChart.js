@@ -118,7 +118,7 @@ export function updateExpectedMoveChart({
 // -----------------------------
 // RESET
 // -----------------------------
-export function resetExpectedMoveChart() {
+export function resetExpectedMoveChart(panelId) {
     buffer.time = [];
     buffer.expectedMove = [];
     buffer.lambda = [];
@@ -126,4 +126,5 @@ export function resetExpectedMoveChart() {
     if (expectedMoveChart) {
         expectedMoveChart.clear();
     }
+    initExpectedMoveChart(panelId);
 }
