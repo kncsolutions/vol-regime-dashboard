@@ -190,6 +190,106 @@ export function extractValues(arr, options = {}) {
 
     return values;
 }
+export function getLatestGEX(buffer) {
+
+    if (!buffer) return null;
+
+    let idx;
+
+    // If buffer not yet filled, use index - 1
+    if (!buffer.filled) {
+        idx = buffer.index - 1;
+        if (idx < 0) return null;
+    }
+    // If filled (your current case), last element is latest
+    else {
+        idx = buffer.size - 1;
+    }
+
+    const callGEX = buffer.call_gex[idx];
+    const putGEX  = buffer.put_gex[idx];
+    const netGEX  = buffer.net_gex[idx];
+
+    // Safety check
+    if (
+        callGEX == null || !isFinite(callGEX) ||
+        putGEX == null  || !isFinite(putGEX)
+    ) {
+        return null;
+    }
+
+    return {
+        callGEX,
+        putGEX,
+        netGEX
+    };
+}
+
+export function getLatestSkew(buffer) {
+
+    if (!buffer) return null;
+
+    let idx;
+
+    // Not filled yet
+    if (!buffer.filled) {
+        idx = buffer.index - 1;
+        if (idx < 0) return null;
+    }
+    // Filled → last element
+    else {
+        idx = buffer.size - 1;
+    }
+
+    const callSkew = buffer.call_skew[idx];
+    const putSkew  = buffer.put_skew[idx];
+
+    // Safety check
+    if (
+        callSkew == null || !isFinite(callSkew) ||
+        putSkew  == null || !isFinite(putSkew)
+    ) {
+        return null;
+    }
+
+    return {
+        callSkew,
+        putSkew
+    };
+}
+
+export function getLatestMarketMicrostructure(buffer) {
+
+    if (!buffer) return null;
+
+    const last = buffer.size - 1;
+
+    const imbalance  = buffer.imbalance[last];
+    const microprice = buffer.microprice[last];
+
+    // 🔥 compute spread from bid/ask
+    const bid = buffer.bid[last];
+    const ask = buffer.ask[last];
+
+    const spread =
+        (bid != null && ask != null && isFinite(bid) && isFinite(ask))
+            ? (ask - bid)
+            : null;
+
+    // Safety check
+    if (
+        imbalance == null || !isFinite(imbalance) ||
+        microprice == null || !isFinite(microprice)
+    ) {
+        return null;
+    }
+
+    return {
+        imbalance,
+        microprice,
+        spread
+    };
+}
 
 // ==============================
 // 📸 SNAPSHOT BUILDER
@@ -201,6 +301,7 @@ export function buildSnapshot({
     dSBuffer,
     volFeatureBuffer,
     marketBuffer,
+    netGEXBuffer,
     marketState,
     currentSpot,
     currentGammaFlip,
@@ -229,17 +330,48 @@ export function buildSnapshot({
     const iv_vals = getLastNFromBufferArray(volFeatureBuffer, "atm_iv", window);
     const IV = oneSigmaFilteredMean(iv_vals);
 
+     // =========================
+    // 🔥 GEX EXTRACTION
+    // =========================
+    const latestGEX = getLatestGEX(netGEXBuffer);
+
+    const callGEX = latestGEX?.callGEX ?? null;
+    const putGEX  = latestGEX?.putGEX ?? null;
+    const netGEX  = latestGEX?.netGEX ?? marketState.netGEX ?? null;
+
+
+    const latestSkew = getLatestSkew(volFeatureBuffer);
+
+    const callSkew = latestSkew?.callSkew ?? null;
+    const putSkew  = latestSkew?.putSkew ?? null;
+
+    const micro = getLatestMarketMicrostructure(marketBuffer);
+
+    const imbalance  = micro?.imbalance ?? null;
+    const microprice = micro?.microprice ?? null;
+    const spread     = micro?.spread ?? null;
+
     return {
-        time: new Date().toISOString(),
+        time: Date.now(),
 
         ltp: currentSpot ?? null,
         gammaFlip: currentGammaFlip ?? null,
+
+         // 🔥 MICROSTRUCTURE
+        imbalance,
+        microprice,
+        spread,
 
         flow,
         dS,
 
         IV,
-        netGEX: marketState.netGEX ?? null,
+        callSkew,
+        putSkew,
+        // 🔥 GEX STRUCTURE
+        netGEX,
+        callGEX,
+        putGEX,
 
         I1,
         I2,

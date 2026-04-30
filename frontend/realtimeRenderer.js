@@ -252,24 +252,55 @@ const RealtimeRenderer = (() => {
     }
 })
 
+let snapshotInterval = null;
+let snapshotRunning = false;
+
 document.getElementById("snapshotBtn").onclick = () => {
 
-    const snapshot = buildSnapshot({
-        I1Buffer,
-        I2Buffer,
-        I3Buffer,
-        dSBuffer,
-        volFeatureBuffer,
-        marketBuffer,
-        marketState,
-        currentSpot,
-        currentGammaFlip,
-        window: 200
-    });
+    snapshotRunning = !snapshotRunning;
 
-    console.log("📸 Snapshot (σ-filtered):", snapshot);
+    if (snapshotRunning) {
+        console.log("🟢 Snapshot streaming started");
 
-    downloadCSV(snapshot);
+        snapshotInterval = setInterval(async () => {
+
+            const snapshot = buildSnapshot({
+                I1Buffer,
+                I2Buffer,
+                I3Buffer,
+                dSBuffer,
+                volFeatureBuffer,
+                marketBuffer,
+                netGEXBuffer,
+                marketState,
+                currentSpot,
+                currentGammaFlip,
+                window: 200
+            });
+
+            try {
+                await fetch(`${API}/save-snapshot`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        stock: activeStock,
+                        snapshot
+                    })
+                });
+            } catch (e) {
+                console.error("Snapshot save error:", e);
+            }
+
+        }, 15000); // 🔥 15 sec
+
+    } else {
+        console.log("🔴 Snapshot streaming stopped");
+
+        clearInterval(snapshotInterval);
+        snapshotInterval = null;
+    }
 };
 
 function downloadCSV(snapshot) {
@@ -2329,6 +2360,8 @@ function updateMarketState(result) {
 
     // Net GEX
     marketState.netGEX = result.netGEX || 0;
+
+
 
     // Maintain rolling history
     marketState.gexHistory.push(marketState.netGEX);

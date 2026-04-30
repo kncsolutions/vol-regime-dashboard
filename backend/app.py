@@ -12,6 +12,9 @@ from dhan_data_extractor import DhanClient
 import requests
 import os
 
+import csv
+from datetime import datetime
+
 ALLOWED_USERS = [
     "pallavagt@gmail.com",
     "kncsolns@gmail.com"
@@ -53,6 +56,12 @@ flipzone_collection = mongo_db["flipzone_latest"]  # ✅
 stocks_collection = mongo_db["stocks_list"]  # ✅
 
 DATABASE_DIR = "database"
+
+TRAINING_DATA_DIR = "training_data"
+
+# ensure folder exists
+if not os.path.exists(TRAINING_DATA_DIR):
+    os.makedirs(TRAINING_DATA_DIR)
 
 def verify_token():
     header = request.headers.get("Authorization")
@@ -1238,6 +1247,167 @@ def get_quote(security_id):
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/save-snapshot", methods=["POST"])
+def save_snapshot():
+
+    try:
+        payload = request.get_json()
+
+        stock = payload.get("stock")
+        snapshot = payload.get("snapshot")
+
+        if not stock or not snapshot:
+            return jsonify({"error": "Invalid payload"}), 400
+
+        file_path = os.path.join(TRAINING_DATA_DIR, f"{stock}.csv")
+
+        # -------------------------
+        # 🔥 CLEAN VALUES (IMPORTANT)
+        # -------------------------
+        cleaned_snapshot = {}
+
+        for k, v in snapshot.items():
+            if isinstance(v, float):
+                if np.isnan(v) or np.isinf(v):
+                    cleaned_snapshot[k] = None
+                else:
+                    cleaned_snapshot[k] = v
+            else:
+                cleaned_snapshot[k] = v
+
+        headers = list(cleaned_snapshot.keys())
+        values = list(cleaned_snapshot.values())
+
+        file_exists = os.path.isfile(file_path)
+
+        # -------------------------
+        # ✍️ APPEND TO CSV
+        # -------------------------
+        with open(file_path, mode="a", newline="") as file:
+            writer = csv.writer(file)
+
+            # write header only once
+            if not file_exists:
+                writer.writerow(headers)
+
+            writer.writerow(values)
+
+        return jsonify({
+            "status": "success",
+            "file": file_path
+        })
+
+    except Exception as e:
+        print("Snapshot save error:", e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/training-data/<stock>")
+def get_training_data(stock):
+
+    try:
+        file_path = os.path.join(TRAINING_DATA_DIR, f"{stock}.csv")
+
+        if not os.path.exists(file_path):
+            return jsonify([])  # not error, just empty
+
+        df = pd.read_csv(file_path)
+
+        if df.empty:
+            return jsonify([])
+
+        # 🔥 only last 100 rows
+        df = df.tail(100)
+
+        # clean NaN / Inf
+        df = df.replace([np.inf, -np.inf], None)
+        df = df.where(pd.notnull(df), None)
+
+        return jsonify(df.to_dict(orient="records"))
+
+    except Exception as e:
+        print("CSV read error:", e)
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/training-view/<stock>")
+def training_view(stock):
+    return f"""
+    <html>
+    <head>
+        <title>CSV Viewer - {stock}</title>
+        <style>
+            body {{ font-family: monospace; background:#111; color:#eee; }}
+            table {{ border-collapse: collapse; width:100%; }}
+            td, th {{ border:1px solid #333; padding:4px; font-size:12px; }}
+            tr:nth-child(even) {{ background:#1a1a1a; }}
+            .bad {{ background:#5a0000; }}
+            .warn {{ background:#5a3a00; }}
+        </style>
+    </head>
+    <body>
+        <h2>{stock} - Live CSV Viewer</h2>
+        <table id="table"></table>
+
+        <script>
+        async function load() {{
+            const res = await fetch("/api/training-data/{stock}");
+            const data = await res.json();
+
+            const table = document.getElementById("table");
+            table.innerHTML = "";
+
+            if (!data.length) return;
+
+            const headers = Object.keys(data[0]);
+
+            // header
+            const trh = document.createElement("tr");
+            headers.forEach(h => {{
+                const th = document.createElement("th");
+                th.innerText = h;
+                trh.appendChild(th);
+            }});
+            table.appendChild(trh);
+
+            // rows
+            data.forEach(row => {{
+                const tr = document.createElement("tr");
+
+                headers.forEach(h => {{
+                    const val = row[h];
+                    const td = document.createElement("td");
+                    td.innerText = val;
+
+                    // 🔥 anomaly highlighting
+                    if (val === null || val === undefined) {{
+                        td.classList.add("bad");
+                    }}
+
+                    if (h === "spread" && val > 5) {{
+                        td.classList.add("warn");
+                    }}
+
+                    if (h === "IV" && val > 1) {{
+                        td.classList.add("warn");
+                    }}
+
+                    tr.appendChild(td);
+                }});
+
+                table.appendChild(tr);
+            }});
+        }}
+
+        setInterval(load, 3000);
+        load();
+        </script>
+    </body>
+    </html>
+    """
+
+
 
 @app.route("/api/test")
 def test():
