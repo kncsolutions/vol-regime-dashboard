@@ -24,6 +24,7 @@ clients = set()
 
 # per-client subscriptions
 client_subscriptions = {}  # {ws: securityId}
+multi_subscriptions = {}  # {ws: set()}
 
 # queue for dhan subscription updates
 subscription_queue = asyncio.Queue()
@@ -37,6 +38,7 @@ async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     clients.add(ws)
     client_subscriptions[ws] = None
+    multi_subscriptions[ws] = set()
 
     print("✅ Client connected:", len(clients))
 
@@ -55,7 +57,9 @@ async def websocket_endpoint(ws: WebSocket):
 
                 old_sid = client_subscriptions.get(ws)
 
+
                 client_subscriptions[ws] = security_id
+                multi_subscriptions[ws] = {security_id}
 
                 await subscription_queue.put({
                     "action": "switch",
@@ -69,7 +73,7 @@ async def websocket_endpoint(ws: WebSocket):
 
             # ➕ SUBSCRIBE (additive, optional)
             elif msg_type == "subscribe":
-                client_subscriptions[ws] = security_id
+                multi_subscriptions[ws].add(security_id)
 
                 await subscription_queue.put({
                     "action": "subscribe",
@@ -83,6 +87,7 @@ async def websocket_endpoint(ws: WebSocket):
     except WebSocketDisconnect:
         clients.discard(ws)
         client_subscriptions.pop(ws, None)
+        multi_subscriptions.pop(ws, None)
         print("❌ Client disconnected:", len(clients))
 
 
@@ -99,12 +104,18 @@ async def broadcast(data):
 
     for client in clients:
         try:
+            # sub = client_subscriptions.get(client)
             sub = client_subscriptions.get(client)
 
+            multi_subs = multi_subscriptions.get(client, set())
+
+
+
             print(f"➡️ Client: {id(client)} | Subscribed SID: {sub}")
+            print(f"➡️ Multi Subs: {multi_subs}")
 
             # 🎯 send only relevant ticks
-            if sub == sid:
+            if sub == sid or sid in multi_subs:
                 print(f"✅ Sending to client {id(client)}")
 
                 await client.send_json(data)
@@ -200,6 +211,8 @@ async def dhan_feed():
 
     while True:  # 🔁 reconnect loop
         try:
+            print("📨 Sending subscription to Dhan")
+            # print(json.dumps(payload, indent=2))
             async with websockets.connect(uri) as ws:
                 print("🚀 Connected to Dhan")
 
@@ -209,57 +222,90 @@ async def dhan_feed():
 
                     # 🔄 1. Handle subscriptions
                     try:
-                        sub = subscription_queue.get_nowait()
+                        while not subscription_queue.empty():
+                            sub = await subscription_queue.get()
 
-                        action = sub.get("action")
+                            action = sub.get("action")
 
-                        # -------------------------
-                        # 🔁 SWITCH (unsubscribe old, subscribe new)
-                        # -------------------------
-                        if action == "switch":
+                            # -------------------------
+                            # 🔁 SWITCH (unsubscribe old, subscribe new)
+                            # -------------------------
+                            if action == "switch":
 
-                            old_sid = sub.get("old")
-                            new_sid = sub.get("new")
-                            sname = sub.get("securityName")
+                                old_sid = sub.get("old")
+                                new_sid = sub.get("new")
+                                sname = sub.get("securityName")
 
-                            print(f"\n🔁 SWITCH REQUEST: {old_sid} → {new_sid}")
+                                print(f"\n🔁 SWITCH REQUEST: {old_sid} → {new_sid}")
 
-                            # 🔴 UNSUBSCRIBE OLD
-                            if old_sid and old_sid in subscribed:
-                                await ws.send(json.dumps({
-                                    "RequestCode": 22,
-                                    "InstrumentCount": 1,
-                                    "InstrumentList": [{
-                                        "ExchangeSegment": "NSE_EQ",
-                                        "SecurityId": str(old_sid)
-                                    }]
-                                }))
+                                # 🔴 UNSUBSCRIBE OLD
+                                if old_sid and old_sid in subscribed:
+                                    await ws.send(json.dumps({
+                                        "RequestCode": 22,
+                                        "InstrumentCount": 1,
+                                        "InstrumentList": [{
+                                            "ExchangeSegment": "NSE_EQ",
+                                            "SecurityId": str(old_sid)
+                                        }]
+                                    }))
 
-                                subscribed.remove(old_sid)
-                                print(f"❌ Unsubscribed: {old_sid}")
+                                    subscribed.remove(old_sid)
+                                    print(f"❌ Unsubscribed: {old_sid}")
 
-                            # 🟢 SUBSCRIBE NEW
-                            if new_sid not in subscribed:
+                                # 🟢 SUBSCRIBE NEW
+                                if new_sid not in subscribed:
 
-                                if sname in ["NIFTY", "BANKNIFTY"]:
-                                    print('Index')
-                                    exchange_segment = "NSE_FNO"
+                                    if sname in ["NIFTY", "BANKNIFTY"]:
+                                        print('Index')
+                                        exchange_segment = "NSE_FNO"
 
-                                else:
-                                    print('Stock')
-                                    exchange_segment = "NSE_EQ"
+                                    else:
+                                        print('Stock')
+                                        exchange_segment = "NSE_EQ"
 
-                                await ws.send(json.dumps({
-                                    "RequestCode": 21,
-                                    "InstrumentCount": 1,
-                                    "InstrumentList": [{
-                                        "ExchangeSegment": exchange_segment,
-                                        "SecurityId": str(new_sid)
-                                    }]
-                                }))
+                                    await ws.send(json.dumps({
+                                        "RequestCode": 21,
+                                        "InstrumentCount": 1,
+                                        "InstrumentList": [{
+                                            "ExchangeSegment": exchange_segment,
+                                            "SecurityId": str(new_sid)
+                                        }]
+                                    }))
 
-                                subscribed.add(new_sid)
-                                print(f"✅ Subscribed: {new_sid}")
+                                    subscribed.add(new_sid)
+                                    print(f"✅ Subscribed: {new_sid}")
+                            elif action == "subscribe":
+
+                                sid = sub.get("securityId")
+
+                                sname = sub.get("securityName")
+
+                                print(f"\n📡 SUBSCRIBE REQUEST: {sid}")
+
+                                if sid not in subscribed:
+
+                                    if sname in ["NIFTY", "BANKNIFTY"]:
+                                        exchange_segment = "NSE_FNO"
+                                    else:
+                                        exchange_segment = "NSE_EQ"
+
+                                    payload = {
+                                        "RequestCode": 21,
+                                        "InstrumentCount": 1,
+                                        "InstrumentList": [{
+                                            "ExchangeSegment": exchange_segment,
+                                            "SecurityId": str(sid)
+                                        }]
+                                    }
+
+                                    print("📨 Sending to Dhan:")
+                                    print(json.dumps(payload, indent=2))
+
+                                    await ws.send(json.dumps(payload))
+
+                                    subscribed.add(sid)
+
+                                    print(f"✅ Dhan subscribed → {sid}")
 
                     except asyncio.QueueEmpty:
                         pass
@@ -270,7 +316,7 @@ async def dhan_feed():
 
                     # 📥 2. Receive ticks
                     try:
-                        msg = await asyncio.wait_for(ws.recv(), timeout=0.01)
+                        msg = await asyncio.wait_for(ws.recv(), timeout=1)
 
                         if isinstance(msg, bytes):
                             size = len(msg)

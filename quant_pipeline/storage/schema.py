@@ -1,0 +1,19 @@
+SNAPSHOT_SCHEMA = [
+    "time",
+    "ltp",
+    "gammaFlip",
+    "imbalance",
+    "microprice",
+    "spread",
+    "flow",
+    "dS",
+    "IV",
+    "callSkew",
+    "putSkew",
+    "netGEX",
+    "callGEX",
+    "putGEX",
+    "I1",
+    "I2",
+    "I3"
+]
