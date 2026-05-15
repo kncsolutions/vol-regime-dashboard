@@ -614,4 +614,7 @@ quant learning and research tool
 ```
 
 For more information, collaboration, or research discussions, contact the project author.
-copyright Pallav Nandi Chaudhuri
+Developed by Pallav Nandi Chaudhuri
+
+This project was built through iterative quantitative research, systems engineering, and LLM-assisted development workflows focused on market microstructure and probabilistic market-state analytics.
+
