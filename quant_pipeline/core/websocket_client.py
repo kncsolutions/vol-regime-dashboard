@@ -105,7 +105,7 @@ class TickStream:
         sid = str(tick["securityId"])
 
         self.latest_ticks[sid] = tick
-        print(tick)
+        # print(tick)
 
         self.update_market_buffer(tick)
 
@@ -138,7 +138,7 @@ class TickStream:
 
                 message = await self.ws.recv()
 
-                print("📦 RAW MESSAGE:", message)
+                # print("📦 RAW MESSAGE:", message)
 
                 data = json.loads(message)
 

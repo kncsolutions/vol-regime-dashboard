@@ -20,6 +20,20 @@ BASE_FEATURES = [
     'netGEX', 'I1', 'I2', 'I3'
 ]
 
+DEBUG_MODE = False
+
+if DEBUG_MODE:
+
+    steps = 50
+    min_paths = 10
+    max_paths = 20
+
+else:
+
+    steps = 250
+    min_paths = 100
+    max_paths = 400
+
 
 class MonteCarloService:
 
@@ -115,7 +129,7 @@ class MonteCarloService:
         # ==============================
         process = StochasticProcess(mu, Sigma)
         generator = PathGenerator(process, impact, dt_model, scaler)
-        mc_engine = MonteCarloEngine(generator, n_paths=200)
+        mc_engine = MonteCarloEngine(generator, n_paths=200)  #200
 
         # ==============================
         # 11. Initial state
@@ -129,13 +143,19 @@ class MonteCarloService:
         gamma_flip = df['gammaFlip'].iloc[-1]
 
         paths, dt_paths, stats = mc_engine.run_until_converged(
+
             X0,
             S0,
-            steps=6000,
+
+            steps=steps,
+
             gamma_flip=gamma_flip,
-            tol=0.01,  # 1% tolerance
-            max_paths=20000,
-            min_paths=1000
+
+            tol=0.015,
+
+            max_paths=max_paths,
+
+            min_paths=min_paths
         )
 
         # ==============================

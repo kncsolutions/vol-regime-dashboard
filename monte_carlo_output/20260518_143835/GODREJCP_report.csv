@@ -1,0 +1,2 @@
+S0,gamma_flip,expected_move,upper_level,lower_level,time_horizon_seconds,prob_hit_upper,prob_hit_lower,prob_hit_upper_horizon,prob_hit_lower_horizon,confidence_probability,confidence_lower,confidence_upper
+1012.7000122070312,1060.0,57.01629935630647,1069.7163115633377,955.6837128507248,25.0,0.036,0.034,0.028,0.032,0.036,0.019670953095786634,0.05232904690421336

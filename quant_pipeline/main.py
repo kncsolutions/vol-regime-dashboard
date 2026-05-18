@@ -3,6 +3,7 @@
 import asyncio
 import pandas as pd
 import aiohttp
+import time
 from datetime import datetime
 
 from quant_pipeline.core.websocket_client import TickStream
@@ -74,6 +75,9 @@ I1_engines = {}
 I2_engines = {}
 
 I3_engines = {}
+
+last_write_time = {}
+CSV_WRITE_INTERVAL = 5
 
 def get_instability_engines(symbol):
 
@@ -153,7 +157,7 @@ async def fetch_option_chain(stock):
             raw_chain,
             expiry
         )
-        print(raw_chain)
+        # print(raw_chain)
 
         option_chain_cache[symbol] = chain_df
 
@@ -283,7 +287,7 @@ def compute_snapshot(symbol, tick, option_chain):
 
         chain = option_chain
 
-        print(type(chain))
+        # print(type(chain))
 
 
         try:
@@ -398,7 +402,7 @@ def compute_snapshot(symbol, tick, option_chain):
 
         print("==================================================\n")
 
-        input("wait to debug")
+        # input("wait to debug")
 
         # =================================================
         # SNAPSHOT
@@ -406,7 +410,9 @@ def compute_snapshot(symbol, tick, option_chain):
 
         snapshot = {
 
-            "time": datetime.now().isoformat(),
+            "time_readable": datetime.now().isoformat(),
+
+            "time": int(time.time()),
 
             "ltp": ltp,
 
@@ -439,7 +445,9 @@ def compute_snapshot(symbol, tick, option_chain):
 
             "I2": I2,
 
-            "I3": I3
+            "I3": I3,
+
+            "symbol": symbol
         }
 
         # =================================================
@@ -454,7 +462,7 @@ def compute_snapshot(symbol, tick, option_chain):
 
         print("===========================================\n")
 
-        input('Wait to debug')
+        # input('Wait to debug')
 
         return snapshot
 
@@ -498,7 +506,7 @@ async def tick_merge_loop():
                 tick = tick_stream.latest_ticks.get(sid)
 
                 option_chain = option_chain_cache.get(symbol)
-                print(option_chain.columns)
+                # print(option_chain.columns)
 
 
                 if not tick:
@@ -529,14 +537,21 @@ async def tick_merge_loop():
                         datetime.now().isoformat()
                     )
 
-                    writer.write_snapshot(
-                        symbol,
-                        aggregated_snapshot
-                    )
+                    now = time.time()
 
-                    print(
-                        f"💾 Snapshot saved → {symbol}"
-                    )
+                    last_ts = last_write_time.get(symbol, 0)
+
+                    if now - last_ts >= CSV_WRITE_INTERVAL:
+                        writer.write_snapshot(
+                            symbol,
+                            snapshot
+                        )
+
+                        last_write_time[symbol] = now
+
+                        print(
+                            f"💾 Snapshot saved → {symbol}"
+                        )
 
             await asyncio.sleep(1)
 
