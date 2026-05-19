@@ -1,2 +1,0 @@
-S0,gamma_flip,expected_move,upper_level,lower_level,time_horizon_seconds,prob_hit_upper,prob_hit_lower,prob_hit_upper_horizon,prob_hit_lower_horizon,confidence_probability,confidence_lower,confidence_upper,timestamp_unix,timestamp_unix_ms,timestamp_human
-1014.4000244140624,1060.0,260.7846059209995,1275.184630335062,753.6154184930629,25.0,0.034,0.06,0.01,0.028,0.034,0.01811456576608622,0.049885434233913784,1779102986,1779102986296,2026-05-18 16:46:26.296220
