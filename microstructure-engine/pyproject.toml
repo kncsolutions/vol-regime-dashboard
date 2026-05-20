@@ -1,0 +1,8 @@
+
+[project]
+name = "microstructure-engine"
+version = "0.1.0"
+description = "Realtime Market Microstructure Engine"
+
+[tool.black]
+line-length = 88

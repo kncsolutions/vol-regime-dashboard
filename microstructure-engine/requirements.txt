@@ -1,0 +1,12 @@
+
+numpy
+pandas
+polars
+pyarrow
+duckdb
+scikit-learn
+scipy
+fastapi
+uvicorn
+websockets
+pyyaml

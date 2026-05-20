@@ -1,0 +1,5 @@
+
+montecarlo:
+  default_paths: 1000
+  default_steps: 250
+  dt: 0.003968

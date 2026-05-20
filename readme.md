@@ -1,5 +1,552 @@
 # Quant Pipeline — Development Log
 # Recursive Probabilistic Market Ecology Framework
+# Microstructure Engine
+
+A probabilistic latent-state market microstructure research framework for:
+
+- online market-state inference
+- order-flow geometry
+- entropy-conditioned forecasting
+- stochastic path simulation
+- probabilistic regime transitions
+- adaptive normalization
+- semantic signal generation
+
+The engine combines:
+
+- market microstructure analytics
+- latent-state clustering
+- transition probability geometry
+- entropy topology
+- stochastic forecasting
+- online probabilistic inference
+
+---
+
+# Core Features
+
+## Market Data Pipeline
+
+- websocket ingestion
+- rolling feature computation
+- parquet persistence
+- online state updates
+
+---
+
+## Microstructure Features
+
+The engine computes several market microstructure variables:
+
+### Order Flow Imbalance (OFI)
+
+```text
+OFI_t = BuyPressure_t - SellPressure_t
+```
+
+---
+
+### Microprice
+
+```text
+MicroPrice_t =
+(
+AskPrice_t * BidVolume_t
++
+BidPrice_t * AskVolume_t
+)
+/
+(
+BidVolume_t + AskVolume_t
+)
+```
+
+---
+
+### Realized / Historical Volatility
+
+```text
+HV_t = sqrt(
+summation( (r_i - mean(r))^2 ) / N
+)
+```
+
+---
+
+### Inventory / Imbalance States
+
+```text
+I1, I2, I3
+```
+
+represent multi-level market imbalance geometry.
+
+---
+
+# Latent State Engine
+
+The framework performs latent-state inference using clustering.
+
+## State Assignment
+
+```text
+S_t ∈ {0,1,2,...,K}
+```
+
+where:
+
+- S_t = latent market regime
+- K = number of inferred regimes
+
+---
+
+## Transition Geometry
+
+The engine estimates:
+
+```text
+P(S_t+1 | S_t)
+```
+
+through empirical transition matrices.
+
+---
+
+## Transition Entropy
+
+Entropy is computed directly from transition topology:
+
+```text
+H(S_t) =
+-summation(
+p_i * log2(p_i)
+)
+```
+
+This measures:
+
+- regime uncertainty
+- transition disorder
+- market instability
+- persistence collapse
+
+---
+
+# Clustering Methodology
+
+The latent-state inference layer uses:
+
+## MiniBatchKMeans
+
+for online-scalable market regime discovery.
+
+---
+
+## Objective Function
+
+The clustering process minimizes:
+
+```text
+J =
+summation(
+|| x_i - mu_k ||^2
+)
+```
+
+where:
+
+- x_i = feature vector
+- mu_k = cluster centroid
+- J = within-cluster variance
+
+---
+
+## Feature Geometry
+
+The clustering engine operates on:
+
+```text
+X_t =
+[
+OFI_t,
+MicroPrice_t,
+HV_t,
+I1_t,
+I2_t,
+I3_t
+]
+```
+
+after normalization.
+
+---
+
+## Why MiniBatchKMeans
+
+MiniBatchKMeans was selected because it provides:
+
+- low-latency updates
+- scalable online learning
+- efficient streaming compatibility
+- memory-efficient clustering
+- real-time regime adaptation
+
+This is important for:
+
+- websocket-driven inference
+- live market-state tracking
+- online latent geometry evolution
+
+---
+
+## Latent Regime Interpretation
+
+The clustering engine infers:
+
+```text
+S_t = Cluster(X_t)
+```
+
+where:
+
+```text
+S_t ∈ {0,1,2,...,K}
+```
+
+Each cluster represents a probabilistic market microstructure regime.
+
+Examples include:
+
+- liquidity compression
+- directional imbalance
+- volatility expansion
+- mean-reversion geometry
+- dealer inventory transition
+
+---
+
+## Future Research Directions
+
+Planned extensions include:
+
+- online incremental clustering
+- probabilistic soft clustering
+- Hidden Markov Models (HMM)
+- Variational latent embeddings
+- manifold regime topology
+- entropy-constrained clustering
+- transition-aware clustering geometry
+
+# Conditional Return Geometry
+
+For each latent state:
+
+```text
+E[dS_t+1 | S_t]
+```
+
+and
+
+```text
+Std[dS_t+1 | S_t]
+```
+
+are estimated empirically.
+
+This enables:
+
+- regime-conditioned forecasting
+- volatility-aware path simulation
+- probabilistic return geometry
+
+---
+
+# Monte Carlo Simulation
+
+The engine generates probabilistic future paths.
+
+## Return Sampling
+
+```text
+dS_t ~ Normal(
+mu_state,
+sigma_state
+)
+```
+
+---
+
+## State Evolution
+
+```text
+S_t+1 ~ P(S_t+1 | S_t)
+```
+
+---
+
+## Cumulative Path
+
+```text
+Path_t =
+summation(dS_i)
+```
+
+---
+
+# Semantic Signal Layer
+
+The architecture supports future semantic regime interpretation.
+
+Examples:
+
+- stable accumulation
+- panic transition
+- volatility expansion
+- dealer unwind
+- entropy compression
+
+---
+
+# Normalization Modes
+
+The engine supports multiple normalization geometries.
+
+## Global Normalization
+
+```text
+x_norm =
+(x - global_mean)
+/
+global_std
+```
+
+---
+
+## Local Normalization
+
+```text
+x_norm =
+(x - rolling_mean)
+/
+rolling_std
+```
+
+---
+
+## Hybrid Normalization
+
+Combines:
+
+- structural stability
+- local adaptability
+- online robustness
+
+---
+
+# GUI System
+
+The project includes a PySide6-based GUI controller for:
+
+- online state visualization
+- regime monitoring
+- Monte Carlo inspection
+- entropy tracking
+- probabilistic forecasting
+
+---
+
+# Current Research Areas
+
+## Online Adaptive Transitions
+
+Future transition modeling:
+
+```text
+P_t(
+S_t+1 |
+S_t,
+OFI_t,
+HV_t,
+Entropy_t
+)
+```
+
+---
+
+## Latent Geometry Refinement
+
+Research focus includes:
+
+- entropy geometry
+- persistence topology
+- state manifold structure
+- probabilistic embeddings
+
+---
+
+## Confidence-Weighted Forecasting
+
+Future direction:
+
+```text
+Forecast =
+summation(
+w_i * Path_i
+)
+```
+
+where:
+
+```text
+w_i = confidence(path_i)
+```
+
+---
+
+# Sub directory Structure
+
+```text
+microstructure-engine/
+│
+├── market_engine/
+│   ├── clustering/
+│   ├── features/
+│   ├── monte_carlo/
+│   ├── signals/
+│   ├── persistence/
+│   ├── normalization/
+│   ├── gui/
+│   └── tests/
+│
+├── data/
+│   ├── parquet/
+│   ├── clusters/
+│   └── states/
+│
+├── backtest/
+│
+├── notebooks/
+│
+└── README.md
+```
+
+---
+
+# How To Use
+
+## 1. Clone Repository
+
+```bash
+git clone <repository-url>
+cd microstructure-engine
+```
+
+---
+
+## 2. Create Environment
+
+```bash
+conda create -n microstructure python=3.11
+conda activate microstructure
+```
+
+---
+
+## 3. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## 4. Start Data Engine
+
+```bash
+python -m market_engine.websocket.stream
+```
+
+---
+
+## 5. Run Clustering Pipeline
+
+```bash
+python -m market_engine.clustering.cluster_states
+```
+
+---
+
+## 6. Run Monte Carlo Engine
+
+```bash
+python -m market_engine.monte_carlo.montecarlo_engine
+```
+
+---
+
+## 7. Run Integrity Tests
+
+```bash
+python -m market_engine.tests.test_montecarlo_integrity
+```
+
+---
+
+## 8. Launch GUI
+
+```bash
+python -m market_engine.gui.main
+```
+
+---
+
+# Research Goals
+
+The long-term objective is to build:
+
+## A Probabilistic Market Intelligence Engine
+
+capable of:
+
+- online latent-state inference
+- probabilistic market forecasting
+- entropy-aware regime analysis
+- semantic state interpretation
+- adaptive transition geometry
+- risk-aware stochastic simulation
+
+---
+
+# Technologies Used
+
+- Python
+- NumPy
+- Pandas
+- PyArrow
+- Scikit-learn
+- PySide6
+- WebSockets
+- Parquet
+- MiniBatchKMeans
+
+---
+
+# Development Notes
+
+This project is an evolving research-oriented probabilistic market microstructure framework.
+
+The architecture combines:
+
+- quantitative finance
+- market microstructure
+- stochastic processes
+- latent-state modeling
+- probabilistic simulation
+- entropy geometry
+
+
+
+---
 ##
 # Stochastic Volatility Engine
 
