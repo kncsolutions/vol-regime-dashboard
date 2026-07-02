@@ -1215,9 +1215,9 @@ function startWebSocket() {
 
                 if (currentSecurityId) {
                     if (currentSecurityName == 'NIFTY')
-                        socketSecurityId = 66071
+                        socketSecurityId = 62329
                     else if (currentSecurityName == 'BANKNIFTY')
-                        socketSecurityId = 66068
+                        socketSecurityId = 61088
                     else
                         socketSecurityId = currentSecurityId
 

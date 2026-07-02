@@ -104,12 +104,15 @@ class DhanClient:
         if expiry:
             payload["Expiry"] = expiry
 
-        print(payload)
+        # print(payload)
+
 
 
         response = self.dhan.option_chain(under_security_id=int(under_security_id),
                                           under_exchange_segment=exchange_segment,
                                           expiry=expiry)
+        # print(response)
+        # input('wait')
 
         # import json
         # print(json.dumps(response, indent=2))
@@ -222,6 +225,8 @@ class DhanClient:
 
         if under_security == 'NIFTY' or under_security == 'BANKNIFTY':
             under_exchange_segment = "IDX_I"
+        print(under_security)
+        # input('...')
 
         response = self.dhan.expiry_list(
             under_security_id=under_security_id,  # Nifty = 13

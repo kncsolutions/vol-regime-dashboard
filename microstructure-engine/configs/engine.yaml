@@ -1,4 +1,4 @@
-normalization_mode: global
+normalization_mode: hybrid
 kmeans: null
 n_clusters: 6
 batch_size: 256

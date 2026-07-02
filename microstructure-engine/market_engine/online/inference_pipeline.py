@@ -51,11 +51,12 @@ class InferencePipeline:
             SignalGenerator()
         )
 
-        self.regime_store = (
-            RegimeStore()
-        )
+
         self.trade_policy = (
             TradePolicy()
+        )
+        self.regime_store = (
+            RegimeStore()
         )
 
     # =================================================
@@ -179,13 +180,7 @@ class InferencePipeline:
             "trapping_score"
         ]
 
-        # ---------------------------------------------
-        # REGIME STORAGE
-        # ---------------------------------------------
 
-        self.regime_store.update_regime(
-            state
-        )
         trade = self.trade_policy.action(
             state
         )
@@ -205,6 +200,14 @@ class InferencePipeline:
         state.risk_score = trade[
             "risk"
         ]
+
+        # ---------------------------------------------
+        # REGIME STORAGE
+        # ---------------------------------------------
+
+        self.regime_store.update_regime(
+            state
+        )
 
         # ---------------------------------------------
         # RETURN

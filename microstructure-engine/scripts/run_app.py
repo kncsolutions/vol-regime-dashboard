@@ -1272,6 +1272,7 @@ class RunApp(QWidget):
 
         lines = stdout.splitlines()
 
+
         for line in lines:
 
             # -------------------------------------------------
@@ -1281,6 +1282,7 @@ class RunApp(QWidget):
             if "TRADE_UPDATE:" in line:
 
                 try:
+                    print("RAW STDOUT:", line)
 
                     payload = ast.literal_eval(
 

@@ -1,0 +1,12 @@
+historical_windows:
+
+  daily:
+    lookback_days: 2000
+
+  intraday_15m:
+    lookback_days: 1825
+    batch_days: 90
+
+api:
+
+  request_sleep_seconds: 0.4

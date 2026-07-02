@@ -142,14 +142,22 @@ async def fetch_option_chain(stock):
 
         expiries = dhan_client.get_expiry_list(
             under_security_id=int(security_id),
-            under_security=underlying
+            under_security=symbol
         )
-
-        expiry = expiries[0]
+        if not isinstance(expiries, list):
+            return
+        if len(expiries) == 0:
+            return
+        from datetime import date
+        today = date.today()
+        if datetime.strptime(expiries[0], "%Y-%m-%d").date() <= today:
+            expiry = expiries[1]
+        else:
+            expiry = expiries[0]
 
         raw_chain = dhan_client.get_option_chain(
             under_security_id=int(security_id),
-            underlying=underlying,
+            underlying=symbol,
             expiry=expiry
         )
 
@@ -498,10 +506,10 @@ async def tick_merge_loop():
                 # -----------------------------------------
 
                 if symbol == "NIFTY":
-                    sid = "66071"
+                    sid = str(stock["secondary_id"])
 
                 elif symbol == "BANKNIFTY":
-                    sid = "66068"
+                    sid = str(stock["secondary_id"])
 
                 tick = tick_stream.latest_ticks.get(sid)
 

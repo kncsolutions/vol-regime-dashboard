@@ -429,7 +429,6 @@ class DhanClient:
 
         # 2 years ago (approx: 730 days)
         from_date = (datetime.today() - timedelta(days=360)).strftime("%Y-%m-%d")
-        print(security_id)
         response = self.dhan.historical_daily_data(security_id=security_id,
                                                    exchange_segment=exchange_segment,
                                                    instrument_type=instrument_type,
@@ -437,56 +436,7 @@ class DhanClient:
                                                    to_date=to_date)
         return response
 
-        d = self._to_dataframe(response)
-        # Ensure datetime consistency
-        d["date"] = pd.to_datetime(d["date"]).dt.tz_localize(None)
-        d = d.sort_values("date")
-        print(d.tail(5))
-        df_live = pd.DataFrame()
-        try:
-            df_live = self._get_quote_data({str(exchange_segment): [int(security_id)]})
-        except Exception as e:
-             pass
-        print(df_live)
-        if len(df_live) > 0:
 
-            # Normalize live date to daily candle
-            df_live["date"] = pd.to_datetime(df_live["date"]).dt.normalize()
-
-            # Add timestamp column to match historical
-            df_live["timestamp"] = df_live["date"].astype("int64") // 10 ** 9
-
-            # Align columns
-            df_live = df_live[[
-                "timestamp", "open", "high", "low", "close",
-                "volume", "open_interest", "date"
-            ]]
-            # --- 🔥 Merge Logic ---
-
-            last_hist_date = d["date"].max().normalize()
-            live_date = df_live["date"].iloc[0]
-
-            if live_date > last_hist_date:
-                # ✅ New day → append
-                d = pd.concat([d, df_live], ignore_index=True)
-
-            elif live_date == last_hist_date:
-                # ✅ Same day → update last candle
-                d.loc[d.index[-1], ["open", "high", "low", "close", "volume"]] = \
-                    df_live.iloc[0][["open", "high", "low", "close", "volume"]].values
-
-        # Final sort
-        d = d.sort_values("date").reset_index(drop=True)
-        # Replace NaN with 0
-        # Smart NaN handling
-        d[["open", "high", "low", "close"]] = d[["open", "high", "low", "close"]].ffill()
-        d["volume"] = d["volume"].fillna(0)
-        d["open_interest"] = d["open_interest"].fillna(0)
-        print(d.tail(5))
-
-        # input("press to continue @ spot..")
-
-        return d
 
     # -------------------------------
     # 🔹 Get Historical Daily Data

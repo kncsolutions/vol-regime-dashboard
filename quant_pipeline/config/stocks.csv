@@ -1,4 +1,3 @@
-symbol,security_id,underlying,lot_size
-GODREJCP,10099,NSE_EQ,500
-ADANIENSOL,10217,NSE_EQ,675
-FEDERALBNK,1023,NSE_EQ,5000
+symbol,security_id,underlying,lot_size,secondary_id
+NIFTY,13,IDX_I,65,62329
+BANKNIFTY,25,IDX_I,30,61088

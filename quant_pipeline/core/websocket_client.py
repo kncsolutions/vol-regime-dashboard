@@ -72,10 +72,10 @@ class TickStream:
             # INDEX MAPPING
             # -----------------------------------------
             if symbol == "NIFTY":
-                sid = 66071
+                sid = stock["secondary_id"]
 
             elif symbol == "BANKNIFTY":
-                sid = 66068
+                sid = stock["secondary_id"]
 
             await self.subscribe(sid, symbol)
 

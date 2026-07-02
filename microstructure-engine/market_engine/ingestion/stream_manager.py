@@ -194,6 +194,74 @@ class StreamManager:
         state = self.inference.process(
             state
         )
+        print(state)
+        # =================================================
+        # GUI PAYLOAD
+        # =================================================
+
+        payload = {
+
+            "symbol":
+                state.symbol,
+
+            "action":
+                state.trade_action,
+
+            "score":
+                float(state.trade_score),
+
+            "confidence":
+                float(state.confidence),
+
+            "entropy":
+                float(state.entropy),
+
+            "risk":
+                float(state.risk_score),
+
+            "size":
+                float(state.position_size),
+
+            "cluster":
+                int(state.cluster),
+
+            "dwell":
+                int(state.dwell_time),
+
+            "hv":
+                float(state.HV),
+
+            "signal":
+                state.signal,
+
+            "semantic_signal":
+                state.semantic_signal,
+
+            "forecast_score":
+                float(state.forecast_score),
+
+            "expected_return":
+                float(state.expected_return),
+
+            "metastable":
+                bool(state.metastable),
+
+            "unstable":
+                bool(state.unstable),
+
+            "trapping_score":
+                float(state.trapping_score),
+        }
+
+        # =================================================
+        # GUI EVENT
+        # =================================================
+
+        print(
+            "TRADE_UPDATE:"
+            + str(payload),
+            flush=True
+        )
         print("\n")
 
         print("=" * 70)
@@ -308,6 +376,8 @@ class StreamManager:
                 self.snapshot_buffer.clear(
                     state.symbol
                 )
+
+
 
         print(
 

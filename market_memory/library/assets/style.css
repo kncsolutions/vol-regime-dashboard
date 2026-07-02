@@ -1,0 +1,79 @@
+
+
+body{
+
+    font-family:Arial,Helvetica,sans-serif;
+
+    background:#f4f0e6;
+
+    color:#222;
+
+    margin:30px;
+
+}
+
+.container{
+
+    max-width:1100px;
+
+    margin:auto;
+
+}
+
+table{
+
+    width:100%;
+
+    border-collapse:collapse;
+
+    margin-bottom:30px;
+
+}
+
+th{
+
+    background:#333;
+
+    color:white;
+
+    padding:8px;
+
+}
+
+td{
+
+    border:1px solid #cccccc;
+
+    padding:8px;
+
+}
+
+.section{
+
+    margin-top:40px;
+
+}
+
+.good{
+
+    color:green;
+
+}
+
+.bad{
+
+    color:red;
+
+}
+
+a{
+
+    text-decoration:none;
+
+}
+
+.navigation{
+
+    margin-bottom:30px;
+
+}
