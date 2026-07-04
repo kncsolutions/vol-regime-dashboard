@@ -38,7 +38,7 @@ def history(
 
 @ingest_app.command()
 def universe(
-    csv_file: str = "config/instruments/equities.csv"
+    csv_file: str = "config/instruments/master_watchlist.csv"
 ):
     """
     Fetch historical data for all symbols in CSV
