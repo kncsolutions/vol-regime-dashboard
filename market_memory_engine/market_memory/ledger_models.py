@@ -81,6 +81,12 @@ class LedgerStatistics:
 
     volatility: float
 
+    vpoc: float
+
+    vah: float
+
+    val: float
+
 
 
 @dataclass(frozen=True)

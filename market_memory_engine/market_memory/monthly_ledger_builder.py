@@ -6,6 +6,7 @@ from market_memory_engine.market_memory.ledger_models import(
     MonthlyLedger
 )
 
+from market_memory_engine.analytics.volume_profile import VolumeProfileCalculator
 
 class MonthlyLedgerBuilder:
 
@@ -112,6 +113,11 @@ class MonthlyLedgerBuilder:
                 data["close"].mean()
 
             )
+            vpoc, vah, val = VolumeProfileCalculator.calculate(
+                data
+            )
+
+
             statistics = LedgerStatistics(
 
                 highest_day=highest_day,
@@ -136,8 +142,15 @@ class MonthlyLedgerBuilder:
 
                 avg_daily_range=avg_daily_range,
 
-                volatility=volatility
+                volatility=volatility,
+
+                vpoc = vpoc,
+
+                vah = vah,
+
+                val = val
             )
+
             data["week"] = data["date"].dt.isocalendar().week
             weekly_breakdown = []
 

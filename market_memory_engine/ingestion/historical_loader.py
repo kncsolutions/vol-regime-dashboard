@@ -28,6 +28,7 @@ from market_memory_engine.ingestion.dhan_client import DhanClient
 from market_memory_engine.market_memory.monthly_ledger_builder import MonthlyLedgerBuilder
 from market_memory_engine.market_memory.quarterly_ledger_builder import QuarterlyLedgerBuilder
 from market_memory_engine.ingestion.ledger_json_encoder import LedgerWriter
+from market_memory_engine.indicators.indicators import EMACalculator, ATRCalculator, RSICalculator
 class HistoricalLoader:
 
     def __init__(self):
@@ -149,6 +150,7 @@ class HistoricalLoader:
 
         output_path = folder / filename
 
+
         df.to_parquet(output_path, index=False)
 
         logger.info(f"Saved: {output_path}")
@@ -190,6 +192,13 @@ class HistoricalLoader:
         # Add metadata
         df["symbol"] = symbol
         df["timeframe"] = "1D"
+        df['ema20'] = EMACalculator(df, 20).calculate_ema()
+        df['ema50'] = EMACalculator(df, 50).calculate_ema()
+        df['ema200'] = EMACalculator(df, 200).calculate_ema()
+
+        df_copy = df.copy(deep=True)
+        df_copy = ATRCalculator(df_copy, period=14).calculate_atr()
+        df['ATR'] = df_copy['ATR']
 
 
         monthly_ledgers = MonthlyLedgerBuilder.build(df)

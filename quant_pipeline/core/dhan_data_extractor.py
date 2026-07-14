@@ -266,18 +266,19 @@ class DhanClient:
             "access-token": self.access_token,
             "client-id": self.client_id
         }
-        print(securities)
+        # print(securities)
 
         payload = {
             "securities": securities
         }
+        print(f"payload: {payload}")
 
         response = requests.post(url, json=payload, headers=headers)
 
         if response.status_code != 200:
             print("Error:", response.status_code, response.text)
             return None
-        # print(response.json())
+        print(response.json())
 
         return response.json()
 

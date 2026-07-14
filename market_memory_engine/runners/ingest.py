@@ -80,14 +80,17 @@ def universe(
 
             symbol = row["symbol"]
 
+
             typer.echo("=" * 60)
             typer.echo(f"[INFO] Loading {symbol}")
             typer.echo("=" * 60)
+
 
             loader.load_daily_timeframe_data(
                 security_id=security_id,
                 symbol=symbol
             )
+
 
             typer.echo(
                 f"[SUCCESS] Completed {symbol}"

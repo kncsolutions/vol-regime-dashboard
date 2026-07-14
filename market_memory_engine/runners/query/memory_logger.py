@@ -1,4 +1,5 @@
 from market_memory_engine.recall.memory_recall import MarketMemoryRecall
+
 import pandas as pd
 class MemoryLogger:
 
@@ -95,6 +96,10 @@ class MemoryLogger:
                 "highest_day": stats.get("highest_day"),
 
                 "lowest_day": stats.get("lowest_day"),
+
+                "vpoc": stats.get("vpoc"),
+                "vah": stats.get("vah"),
+                "val": stats.get("val"),
 
 
             })
@@ -193,10 +198,11 @@ if __name__ == "__main__":
     )
 
     june = recall.recall_month(2026, 6)
-    # print(june)
+
     MemoryLogger.print_month(june)
 
     june_df = MemoryLogger.to_dataframe(june)
+
 
     QueryOutput.save(
 

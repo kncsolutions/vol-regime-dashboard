@@ -3,7 +3,7 @@ import pandas as pd
 from market_memory_engine.market_memory.ledger_models import (
 MonthlyBreakdown, QuarterlyLedger, LedgerStatistics)
 
-
+from market_memory_engine.analytics.volume_profile import VolumeProfileCalculator
 class QuarterlyLedgerBuilder:
 
     @staticmethod
@@ -107,6 +107,9 @@ class QuarterlyLedgerBuilder:
                 data["close"].mean()
 
             )
+            vpoc, vah, val = VolumeProfileCalculator.calculate(
+                data
+            )
             statistics = LedgerStatistics(
 
                 highest_day=highest_day,
@@ -131,7 +134,13 @@ class QuarterlyLedgerBuilder:
 
                 avg_daily_range=avg_daily_range,
 
-                volatility=volatility
+                volatility=volatility,
+
+                vpoc = vpoc,
+
+                vah = vah,
+
+                val = val
             )
             data["month"] = data["date"].dt.month
             monthly_breakdown = []
